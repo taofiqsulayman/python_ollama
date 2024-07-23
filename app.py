@@ -6,6 +6,8 @@ import json
 import pandas as pd
 import pytesseract
 from PIL import Image
+import io
+from ollama_setup import get_ollama_response
 
 
 def extract_text_from_images(images) -> str:
@@ -13,6 +15,10 @@ def extract_text_from_images(images) -> str:
     for img in images:
         text += pytesseract.image_to_string(img)
     return text
+
+def extract_data(text: str, instructions: list, model) -> dict:
+    response = get_ollama_response(text, instructions, model)
+    return response;
 
 
 st.set_page_config(page_title="Data Extraction with Local LLMs", page_icon="🔍")
@@ -111,7 +117,7 @@ if files:
 
     responses = []
     for text in extracted_texts:
-        file_data = extract_data(text, st.session_state["instructions"])
+        file_data = extract_data(text, st.session_state["instructions"], st.session_state['model'])
         responses.append(file_data)
 
     # Convert responses to CSV
