@@ -9,6 +9,9 @@ from PIL import Image
 import io
 from ollama_setup import get_ollama_response
 
+import time
+
+start_time = time.time()
 
 def extract_text_from_images(images) -> str:
     text = ""
@@ -137,3 +140,7 @@ if files:
         st.write(pd.DataFrame(csv_data))
     else:
         st.markdown("No data extracted")
+
+end_time = time.time()
+execution_time = end_time - start_time
+st.write(f"Execution time: {execution_time:.2f} seconds")

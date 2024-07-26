@@ -47,7 +47,7 @@ def get_ollama_response(data: str, instructions: list, model):
     )
 
     prompt = f"""You are a professional Data Analyst / Data Miner and your job is to extract detailed information from documents.
-    If a particular field is not found in the document, please return 'not found' for that field.
+    If a particular field is not found in the document, please return 'not found' for that field. Return the response as a JSON based on the instructions below;
     Here are the fields to extract: {unique_instructions},
     Also, return response in this format: {response_format}
     The document is as follows: {data}
