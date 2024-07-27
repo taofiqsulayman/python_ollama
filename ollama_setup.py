@@ -53,7 +53,9 @@ def get_ollama_response(data: str, instructions: list, model):
     The document is as follows: {data}
     """
 
-    response = ollama.generate(model=model, prompt=prompt, stream=False)
+    response = ollama.generate(
+        model=model, prompt=prompt, stream=False, host="ollama", port=11434
+    )
     refined_response = extract_json_from_response(response)
 
     return refined_response
