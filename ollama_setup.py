@@ -54,7 +54,7 @@ def get_ollama_response(data: str, instructions: list, model):
     """
 
     response = ollama.generate(
-        model=model, prompt=prompt, stream=False, host="ollama", port=11434
+        model=model, prompt=prompt, stream=False
     )
     refined_response = extract_json_from_response(response)
 

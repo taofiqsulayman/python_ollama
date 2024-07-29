@@ -1,31 +1,16 @@
 version: '3'
 services:
-  ollama:
-    image: ollama/ollama
-    ports:
-      - "11434:11434"
-    # command: pull llama3 && run
-    volumes:
-      - ./data/ollama:/root/.ollama
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: "0.5"
-    #       memory: 4G
   app:
-    image: webapp
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8501:8501"
-    # depends_on:
-    #   - ollama
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         cpus: "0.5"
-  #         memory: 4G
+      - "11434:11434"  # Ollama port
+      - "8501:8501"    # Streamlit port
+    volumes:
+      - ./data/ollama:/root/.ollama
+    environment:
+      - OLLAMA_MODEL=all-minilm  # You can change this to your preferred model
 
 volumes:
   ollama-data:

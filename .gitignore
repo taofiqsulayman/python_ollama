@@ -1,3 +1,6 @@
 /venv/*
 venv/*
 /data/*
+.ollama
+.ollama/*
+__pycache__
