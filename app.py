@@ -8,16 +8,17 @@ import pytesseract
 from PIL import Image
 import io
 from ollama_setup import get_ollama_response
+import docx
 
 import time
 
 start_time = time.time()
 
-def extract_text_from_images(images) -> str:
-    text = ""
-    for img in images:
-        text += pytesseract.image_to_string(img)
-    return text
+# def extract_text_from_images(images) -> str:
+#     text = ""
+#     for img in images:
+#         text += pytesseract.image_to_string(img)
+#     return text
 
 def extract_data(text: str, instructions: list, model) -> dict:
     response = get_ollama_response(text, instructions, model)
@@ -90,7 +91,7 @@ if st.session_state["instructions"]:
 with st.form(key="resume_form"):
     files = st.file_uploader(
         "Add file(s) in PDF or CSV format:",
-        type=["pdf", "csv"],
+        type=["pdf", "csv", "doc", "docx"],
         accept_multiple_files=True,
     )
     submitted = st.form_submit_button("Submit")
@@ -103,20 +104,21 @@ if files:
             text = ""
             for page in pdf:
                 text += page.get_text()
-                images = page.get_images(full=True)
-                for img in images:
-                    xref = img[0]
-                    base_image = pdf.extract_image(xref)
-                    image_bytes = base_image["image"]
-                    image = Image.open(io.BytesIO(image_bytes))
-                    text += extract_text_from_images([image])
             extracted_texts.append(text)
         elif file.type == "text/csv":
             df = pd.read_csv(file)
             for index, row in df.iterrows():
-                name = row["Name"]
-                resume = row["Resume"]
-                extracted_texts.append(f"{name}\n{resume}")
+                extracted_text = "\n".join(str(value) for value in row.values)
+                extracted_texts.append(extracted_text)
+        elif (
+            file.type
+            == "doc" or file.type == "docx"
+        ):
+            doc = docx.Document(file)
+            text = ""
+            for para in doc.paragraphs:
+                text += para.text
+            extracted_texts.append(text)
 
     responses = []
     for text in extracted_texts:

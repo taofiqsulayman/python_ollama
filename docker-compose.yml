@@ -10,7 +10,7 @@ services:
     volumes:
       - ./data/ollama:/root/.ollama
     environment:
-      - OLLAMA_MODEL=all-minilm  # You can change this to your preferred model
+      - OLLAMA_MODEL=llama3  # You can change this to your preferred model
 
 volumes:
   ollama-data:

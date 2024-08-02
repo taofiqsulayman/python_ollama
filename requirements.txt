@@ -4,3 +4,4 @@ pymupdf
 pandas
 pytesseract
 Pillow
+python-docx

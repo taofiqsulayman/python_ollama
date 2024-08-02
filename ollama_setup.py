@@ -59,3 +59,4 @@ def get_ollama_response(data: str, instructions: list, model):
     refined_response = extract_json_from_response(response)
 
     return refined_response
+
