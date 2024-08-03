@@ -3,7 +3,6 @@ import json
 
 
 def extract_json_from_response(response):
-    # Extract the "response" field from the response object
     response_text = response.get("response", "")
 
     # Find the starting position of the JSON-like string in the response
@@ -14,10 +13,10 @@ def extract_json_from_response(response):
     # Extract the JSON-like string from the response text
     json_like_str = response_text[start_pos:end_pos]
 
-    # Convert the JSON-like string to a dictionary
     try:
-        extracted_info = eval(json_like_str)
-    except SyntaxError as e:
+        # Convert the JSON-like string to a dictionary
+        extracted_info = json.loads(json_like_str)
+    except json.JSONDecodeError as e:
         print(f"Error parsing JSON-like string: {e}")
         extracted_info = {}
 
@@ -59,4 +58,3 @@ def get_ollama_response(data: str, instructions: list, model):
     refined_response = extract_json_from_response(response)
 
     return refined_response
-
