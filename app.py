@@ -42,7 +42,10 @@ st.markdown(
 if "model" not in st.session_state:
     st.session_state['model'] = ''
 
-models = [model['name'] for model in ollama.list()['models']]
+# models = [model['name'] for model in ollama.list()['models']]
+# st.session_state['model'] = st.selectbox('Select Model', models)
+
+models = ['llama3:latest', 'mistral']
 st.session_state['model'] = st.selectbox('Select Model', models)
 
 # Section for adding extraction instructions
