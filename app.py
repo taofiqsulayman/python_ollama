@@ -1,151 +1,36 @@
 import streamlit as st
 import ollama
-import fitz
-import os
-import json
-import pandas as pd
-import pytesseract
-from PIL import Image
-import io
-from ollama_setup import get_ollama_response
-import docx
 
-import time
+st.title("Local LLM Chat")
 
-start_time = time.time()
-
-# def extract_text_from_images(images) -> str:
-#     text = ""
-#     for img in images:
-#         text += pytesseract.image_to_string(img)
-#     return text
-
-def extract_data(text: str, instructions: list, model) -> dict:
-    response = get_ollama_response(text, instructions, model)
-    return response;
-
-
-st.set_page_config(page_title="Data Extraction with Local LLMs", page_icon="🔍")
-st.title('Run Open source LLMs Locally')
-st.markdown('This is a simple Streamlit app that allows you to run Open source LLMs locally. ')
-
-# Initialize session state for instructions
-if "instructions" not in st.session_state:
-    st.session_state["instructions"] = []
-
-# Section for adding extraction instructions
-st.subheader("Extraction Instructions")
-st.markdown(
-    "Add instructions for extracting information from the document. The title should be unique."
-)
-
+# Allow the user to select a model
 if "model" not in st.session_state:
-    st.session_state['model'] = ''
+    st.session_state["model"] = ""
 
-# models = [model['name'] for model in ollama.list()['models']]
-# st.session_state['model'] = st.selectbox('Select Model', models)
+models = [model["name"] for model in ollama.list()["models"]]
+st.session_state["model"] = st.selectbox("Select Model", models)
 
-models = ['llama3:latest', 'mistral']
-st.session_state['model'] = st.selectbox('Select Model', models)
+user_input = st.text_input("Enter your prompt:")
 
-# Section for adding extraction instructions
-st.subheader("Extraction Instructions")
-st.markdown(
-    "Add instructions for extracting information from the document. The title should be unique."
-)
-
-with st.form(key="instruction_form"):
-    title = st.text_input("Title")
-    data_type = st.selectbox("Data Type", ["string", "number"])
-    description = st.text_area("Description")
-    add_button = st.form_submit_button("Add")
-
-    if add_button and title and data_type and description:
-        st.session_state["instructions"].append(
-            {"title": title, "data_type": data_type, "description": description}
-        )
-
-# Define a CSS style for the card
-card_style = """
-<style>
-.card {
-    box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
-    transition: 0.3s;
-    padding: 10px;
-    margin-bottom: 10px; /* Space between cards */
-}
-.card:hover {
-    box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
-}
-</style>
-"""
-
-st.markdown(card_style, unsafe_allow_html=True)
-
-if st.session_state["instructions"]:
-    st.subheader("Added Instructions")
-    for instruction in st.session_state["instructions"]:
-        st.markdown(
-            f"<div class='card' style='display: flex; align-items: center;'><div style='flex-grow: 1;' title='{instruction['description']} ({instruction['data_type']})'>{instruction['title']}</div></div>",
-            unsafe_allow_html=True,
-        )
-
-# File uploader and submit button
-with st.form(key="resume_form"):
-    files = st.file_uploader(
-        "Add file(s) in PDF or CSV format:",
-        type=["pdf", "csv", "doc", "docx"],
-        accept_multiple_files=True,
+if user_input:
+    # Example with non-streaming response (commented out)
+    response = ollama.generate(
+        model=st.session_state["model"], prompt=user_input, stream=False
     )
-    submitted = st.form_submit_button("Submit")
+    st.write(response["response"])
 
-if files:
-    extracted_texts = []
-    for file in files:
-        if file.type == "application/pdf":
-            pdf = fitz.open(stream=file.read(), filetype="pdf")
-            text = ""
-            for page in pdf:
-                text += page.get_text()
-            extracted_texts.append(text)
-        elif file.type == "text/csv":
-            df = pd.read_csv(file)
-            for index, row in df.iterrows():
-                extracted_text = "\n".join(str(value) for value in row.values)
-                extracted_texts.append(extracted_text)
-        elif (
-            file.type
-            == "doc" or file.type == "docx"
-        ):
-            doc = docx.Document(file)
-            text = ""
-            for para in doc.paragraphs:
-                text += para.text
-            extracted_texts.append(text)
 
-    responses = []
-    for text in extracted_texts:
-        file_data = extract_data(text, st.session_state["instructions"], st.session_state['model'])
-        responses.append(file_data)
+    # # Example with streaming response
+    # st.write("Generating response...")
 
-    # Convert responses to CSV
-    csv_data = []
-    for idx, data in enumerate(responses):
-        if data:
-            row = {}
-            for instruction in st.session_state["instructions"]:
-                title = instruction["title"]
-                formatted_title = title.lower().replace(" ", "_")
-                row[title] = data.get(formatted_title)
-            csv_data.append(row)
+    # # Example with streaming response
+    # response_placeholder = st.empty()
+    # response_text = ""
 
-    # Display summary of the CSV data
-    if csv_data:
-        st.subheader("CSV Summary")
-        st.write(pd.DataFrame(csv_data))
-    else:
-        st.markdown("No data extracted")
+    # for token in ollama.generate(
+    #     model=st.session_state["model"], prompt=user_input, stream=True
+    # ):
+    #     response_text += token["response"]
+    #     response_placeholder.markdown(response_text)
 
-end_time = time.time()
-execution_time = end_time - start_time
-st.write(f"Execution time: {execution_time:.2f} seconds")
+    # st.write("\nResponse complete.")
