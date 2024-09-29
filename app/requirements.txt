@@ -1,0 +1,13 @@
+torch
+torchvision
+torchaudio
+vllm
+streamlit
+python-docx
+pandas
+python-doctr[torch]
+pymupdf
+pymupdf4llm
+pillow
+tabulate
+setuptools
