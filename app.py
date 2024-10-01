@@ -28,8 +28,6 @@ def image_processor():
     if st.button("Generate Output"):
         start_time = time.time()
         if image_file and prompt:
-            # Load image
-            # image = Image.open(image_file)
             image = Image.open(image_file).convert("RGB")
 
             st.image(image, caption="Uploaded Image", use_column_width=True)
@@ -47,13 +45,14 @@ def image_processor():
 def file_processor():
     st.title("File Processor")
     
+    st.markdown("### Upload Files")
     uploaded_files = st.file_uploader("Upload a supported file", accept_multiple_files=True, type=["pdf", "xlsx", "csv", "tsv", "docx", "doc", "txt"])
     
     if "instructions" not in st.session_state:
         st.session_state["instructions"] = []
 
     # Section for adding extraction instructions
-    st.markdown("## Extraction Instructions")
+    st.markdown("### Extraction Instructions")
     st.markdown(
         "Add instructions for extracting information from the document. The title should be unique."
     )
@@ -73,7 +72,8 @@ def file_processor():
         st.markdown("### Added Instructions")
         for instruction in st.session_state["instructions"]:
             with st.expander(instruction["title"]):
-                st.markdown(instruction["description"] + " data type:" + " (" + instruction["data_type"] + ")")
+                st.markdown(instruction["description"])
+                st.markdown(f"Data Type: {instruction['data_type']}")
     
     if st.button("Generate Output"):
         start_time = time.time()                    
@@ -87,7 +87,7 @@ def file_processor():
                     input_dir = Path(temp_dir) / "input"
                     input_dir.mkdir()
 
-                    for uploaded_file in st.session_state.uploaded_files:
+                    for uploaded_file in uploaded_files:
                         # Save uploaded file to temporary directory
                         input_file = input_dir / uploaded_file.name
                         with open(input_file, "wb") as f:
