@@ -1,148 +1,134 @@
 import streamlit as st
-import ollama
-import fitz
-import os
-import json
-import pandas as pd
-import pytesseract
+import tempfile
+from pathlib import Path
 from PIL import Image
-import io
-from ollama_setup import get_ollama_response
-import docx
+import pandas as pd
+from ollama_setup import run_inference_on_document, run_inference_on_image
+from utils import process_files
 
 import time
 
-start_time = time.time()
+def extract_data_from_document(text: str, instructions: list) -> dict:
+    response = run_inference_on_document(text, instructions)
+    return response
 
-# def extract_text_from_images(images) -> str:
-#     text = ""
-#     for img in images:
-#         text += pytesseract.image_to_string(img)
-#     return text
+def extract_data_from_image(image, text_input: str) -> dict:
+    response = run_inference_on_image(image, text_input)
+    return response
 
-def extract_data(text: str, instructions: list, model) -> dict:
-    response = get_ollama_response(text, instructions, model)
-    return response;
+# Page 1: Image Processor
+def image_processor():
+    st.title("Image Processor")
+    st.write("Upload an image and enter a prompt to generate output.")
+    
+    # Upload image
+    image_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+    prompt = st.text_area("Enter your prompt here:")
+    
+    if st.button("Generate Output"):
+        start_time = time.time()
+        if image_file and prompt:
+            # Load image
+            # image = Image.open(image_file)
+            image = Image.open(image_file).convert("RGB")
 
+            st.image(image, caption="Uploaded Image", use_column_width=True)
 
-st.set_page_config(page_title="Data Extraction with Local LLMs", page_icon="🔍")
-st.title('Run Open source LLMs Locally')
-st.markdown('This is a simple Streamlit app that allows you to run Open source LLMs locally. ')
+            # Generate output
+            response = extract_data_from_image(image, prompt)
+            
+            end_time = time.time()
+            with st.expander("Output"):
+                st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
+                st.write(response)
+        
 
-# Initialize session state for instructions
-if "instructions" not in st.session_state:
-    st.session_state["instructions"] = []
+# Page 2: File Processor
+def file_processor():
+    st.title("File Processor")
+    
+    uploaded_files = st.file_uploader("Upload a supported file", accept_multiple_files=True, type=["pdf", "xlsx", "csv", "tsv", "docx", "doc", "txt"])
+    
+    if "instructions" not in st.session_state:
+        st.session_state["instructions"] = []
 
-# Section for adding extraction instructions
-st.subheader("Extraction Instructions")
-st.markdown(
-    "Add instructions for extracting information from the document. The title should be unique."
-)
-
-if "model" not in st.session_state:
-    st.session_state['model'] = ''
-
-models = [model['name'] for model in ollama.list()['models']]
-st.session_state['model'] = st.selectbox('Select Model', models)
-
-# Section for adding extraction instructions
-st.subheader("Extraction Instructions")
-st.markdown(
-    "Add instructions for extracting information from the document. The title should be unique."
-)
-
-with st.form(key="instruction_form"):
-    title = st.text_input("Title")
-    data_type = st.selectbox("Data Type", ["string", "number"])
-    description = st.text_area("Description")
-    add_button = st.form_submit_button("Add")
-
-    if add_button and title and data_type and description:
-        st.session_state["instructions"].append(
-            {"title": title, "data_type": data_type, "description": description}
-        )
-
-# Define a CSS style for the card
-card_style = """
-<style>
-.card {
-    box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
-    transition: 0.3s;
-    padding: 10px;
-    margin-bottom: 10px; /* Space between cards */
-}
-.card:hover {
-    box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
-}
-</style>
-"""
-
-st.markdown(card_style, unsafe_allow_html=True)
-
-if st.session_state["instructions"]:
-    st.subheader("Added Instructions")
-    for instruction in st.session_state["instructions"]:
-        st.markdown(
-            f"<div class='card' style='display: flex; align-items: center;'><div style='flex-grow: 1;' title='{instruction['description']} ({instruction['data_type']})'>{instruction['title']}</div></div>",
-            unsafe_allow_html=True,
-        )
-
-# File uploader and submit button
-with st.form(key="resume_form"):
-    files = st.file_uploader(
-        "Add file(s) in PDF or CSV format:",
-        type=["pdf", "csv", "doc", "docx"],
-        accept_multiple_files=True,
+    # Section for adding extraction instructions
+    st.markdown("## Extraction Instructions")
+    st.markdown(
+        "Add instructions for extracting information from the document. The title should be unique."
     )
-    submitted = st.form_submit_button("Submit")
 
-if files:
-    extracted_texts = []
-    for file in files:
-        if file.type == "application/pdf":
-            pdf = fitz.open(stream=file.read(), filetype="pdf")
-            text = ""
-            for page in pdf:
-                text += page.get_text()
-            extracted_texts.append(text)
-        elif file.type == "text/csv":
-            df = pd.read_csv(file)
-            for index, row in df.iterrows():
-                extracted_text = "\n".join(str(value) for value in row.values)
-                extracted_texts.append(extracted_text)
-        elif (
-            file.type
-            == "doc" or file.type == "docx"
-        ):
-            doc = docx.Document(file)
-            text = ""
-            for para in doc.paragraphs:
-                text += para.text
-            extracted_texts.append(text)
+    with st.form(key="instruction_form"):
+        title = st.text_input("Title")
+        data_type = st.selectbox("Data Type", ["string", "number"])
+        description = st.text_area("Description")
+        add_button = st.form_submit_button("Add")
 
-    responses = []
-    for text in extracted_texts:
-        file_data = extract_data(text, st.session_state["instructions"], st.session_state['model'])
-        responses.append(file_data)
+        if add_button and title and data_type and description:
+            st.session_state["instructions"].append(
+                {"title": title, "data_type": data_type, "description": description}
+            )
 
-    # Convert responses to CSV
-    csv_data = []
-    for idx, data in enumerate(responses):
-        if data:
-            row = {}
-            for instruction in st.session_state["instructions"]:
-                title = instruction["title"]
-                formatted_title = title.lower().replace(" ", "_")
-                row[title] = data.get(formatted_title)
-            csv_data.append(row)
+    if st.session_state["instructions"]:
+        st.markdown("### Added Instructions")
+        for instruction in st.session_state["instructions"]:
+            with st.expander(instruction["title"]):
+                st.markdown(instruction["description"] + " data type:" + " (" + instruction["data_type"] + ")")
+    
+    if st.button("Generate Output"):
+        start_time = time.time()                    
+        if uploaded_files and st.session_state["instructions"]:
+            with st.spinner("Processing files..."):
+                start_time = time.time()
+                extracted_texts = []
 
-    # Display summary of the CSV data
-    if csv_data:
-        st.subheader("CSV Summary")
-        st.write(pd.DataFrame(csv_data))
-    else:
-        st.markdown("No data extracted")
+                # Create temporary directory for input
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    input_dir = Path(temp_dir) / "input"
+                    input_dir.mkdir()
 
-end_time = time.time()
-execution_time = end_time - start_time
-st.write(f"Execution time: {execution_time:.2f} seconds")
+                    for uploaded_file in st.session_state.uploaded_files:
+                        # Save uploaded file to temporary directory
+                        input_file = input_dir / uploaded_file.name
+                        with open(input_file, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+
+                        extracted_text = process_files(input_file)
+                        extracted_texts.append(extracted_text)
+                
+                responses = []
+                for text in extracted_texts:
+                    file_data = extract_data_from_document(text, st.session_state["instructions"])
+                    responses.append(file_data)
+                    
+                # Convert responses to CSV
+                csv_data = []
+                for idx, data in enumerate(responses):
+                    if data:
+                        row = {}
+                        for instruction in st.session_state["instructions"]:
+                            title = instruction["title"]
+                            formatted_title = title.lower().replace(" ", "_")
+                            row[title] = data.get(formatted_title)
+                        csv_data.append(row)
+
+                end_time = time.time()
+                
+                if csv_data:
+                    with st.expander("Output"):
+                        st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
+                        st.write(pd.DataFrame(csv_data))
+                else:
+                    st.warning("No data extracted from the files.")
+                    st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
+
+
+# Main App
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Image Processor", "File Processor"])
+
+if page == "Image Processor":
+    image_processor()
+elif page == "File Processor":
+    file_processor()
+

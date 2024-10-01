@@ -1,5 +1,6 @@
 import ollama
 import json
+import io
 
 
 def extract_json_from_response(response):
@@ -23,7 +24,7 @@ def extract_json_from_response(response):
     return extracted_info
 
 
-def get_ollama_response(data: str, instructions: list, model):
+def run_inference_on_document(data: str, instructions: list):
     # Ensure unique titles in a case-insensitive manner
     seen_titles = set()
     unique_instructions = []
@@ -53,8 +54,33 @@ def get_ollama_response(data: str, instructions: list, model):
     """
 
     response = ollama.generate(
-        model=model, prompt=prompt, stream=False
+        model="llama3.2",
+        prompt=prompt, 
+        stream=False
     )
     refined_response = extract_json_from_response(response)
 
     return refined_response
+
+
+def run_inference_on_image(image, text_input: str):
+    # Convert the PIL image to bytes
+    img_byte_arr = io.BytesIO()
+    image.save(img_byte_arr, format='PNG')  # Save the image in PNG format
+    img_byte_arr = img_byte_arr.getvalue()  # Get the image as bytes
+    
+    prompt = f"{text_input}"
+    
+    # Pass the image bytes to the ollama.generate function
+    response = ollama.generate(
+        model="llava",
+        prompt=prompt,
+        images=[img_byte_arr],  # Send image as bytes
+    )
+    
+    refined_response = extract_json_from_response(response)
+    
+    return refined_response
+
+    
+    

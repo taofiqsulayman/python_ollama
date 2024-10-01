@@ -8,6 +8,8 @@ COPY entrypoint.sh ./
 
 COPY app.py ./
 
+COPY utils.py ./
+
 COPY ollama_setup.py ./
 
 COPY docker-startup ./

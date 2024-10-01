@@ -1,7 +1,14 @@
 streamlit
 ollama
 pymupdf
+pymupdf4llm
 pandas
-pytesseract
 Pillow
 python-docx
+torch
+torchvision
+torchaudio
+python-doctr[torch]
+tabulate
+setuptools
+watchdog

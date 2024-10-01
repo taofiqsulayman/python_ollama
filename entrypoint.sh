@@ -5,9 +5,10 @@ echo "Starting the Ollama Server"
 ollama serve &
 
 # Check to see if the Llama3 LLM is available
-echo "Waiting for Facebook's Open Source Llama3 downloads"
+echo "Waiting for models to downloads"
 sleep 5 # Necessary if server is not yet up
-ollama pull llama3
+ollama pull llama3.2:3b
+ollama pull llava:13b
 
 # Start the streamlit server, blocking exit
 echo "Starting the Streamlit server"
