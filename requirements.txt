@@ -12,3 +12,4 @@ python-doctr[torch]
 tabulate
 setuptools
 watchdog
+orjson

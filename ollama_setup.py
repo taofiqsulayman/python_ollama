@@ -36,23 +36,17 @@ def run_inference_on_document(data: str, instructions: list):
                 }
             )
 
-    response_format = (
-        "{\n"
-        + ",\n".join([f'  "{instr["title"]}": ""' for instr in unique_instructions])
-        + "\n}"
-    )
-
     prompt = f"""You are a professional Data Analyst and your job is to extract detailed information from documents.
     If a particular field is not found in the document, please return 'not found' for that field (very important).
-    Your response should be only the information extracted from the document in JSON format (very important).
+    Your response should be only the specified fields and information extracted from the document in JSON format (very important).
     Here are the fields to extract: {unique_instructions},
-    Also, return response in this format: {response_format}
     The document is as follows: {data}
     """
 
     response = ollama.generate(
         model="llama3.1",
-        prompt=prompt, 
+        prompt=prompt,
+        format="json", 
         stream=False
     )
     refined_response = extract_json_from_response(response)
