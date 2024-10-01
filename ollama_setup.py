@@ -51,7 +51,7 @@ def run_inference_on_document(data: str, instructions: list):
     """
 
     response = ollama.generate(
-        model="llama3.2",
+        model="llama3.1",
         prompt=prompt, 
         stream=False
     )

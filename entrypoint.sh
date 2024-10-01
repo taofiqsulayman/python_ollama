@@ -8,6 +8,7 @@ ollama serve &
 echo "Waiting for models to downloads"
 sleep 5 # Necessary if server is not yet up
 ollama pull llama3.2:3b
+ollama run llama3.1
 ollama pull llava:13b
 
 # Start the streamlit server, blocking exit
