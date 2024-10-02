@@ -63,7 +63,7 @@ def run_inference_on_image(image, text_input: str):
     
     # Pass the image bytes to the ollama.generate function
     response = ollama.generate(
-        model="llava",
+        model="llava:13b",
         prompt=prompt,
         images=[img_byte_arr], 
         stream=False
