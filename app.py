@@ -3,60 +3,121 @@ import tempfile
 from pathlib import Path
 from PIL import Image
 import pandas as pd
-from ollama_setup import run_inference_on_document, run_inference_on_image
+import torch
+from transformers import MllamaForConditionalGeneration, AutoProcessor, AutoModelForCausalLM, AutoTokenizer
+import json
 from utils import process_files
 
-import time
+SYSTEM_INSTRUCTION = """You are an image interpreter. Your task is to analyze the provided image, identify key elements, and provide a clear interpretation. Based on your analysis, generate a detailed summary that includes an explanation of what you see, any notable features, and potential implications or insights. Ensure your output is structured and easily understandable."""
 
-def extract_data_from_document(text: str, instructions: list) -> dict:
-    response = run_inference_on_document(text, instructions)
+@st.cache_resource
+def load_llama_vision():
+    model = MllamaForConditionalGeneration.from_pretrained(
+        "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+    )
+    processor = AutoProcessor.from_pretrained("meta-llama/Llama-3.2-11B-Vision-Instruct")
+    return model, processor
+
+@st.cache_resource
+def load_llama():
+    model = AutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3.1-8B-Instruct")
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3.1-8B-Instruct")
+    return model, tokenizer
+
+def extract_assistant_reply(input_string):
+    start_tag = "<|start_header_id|>assistant<|end_header_id|>"
+    start_index = input_string.find(start_tag)
+    if start_index == -1:
+        return "Assistant's reply not found."
+    start_index += len(start_tag)
+    assistant_reply = input_string[start_index:].strip()
+    return assistant_reply
+
+def process_image(image, text_input, model, processor, history):
+    messages = [
+        {"role": "system", "content": SYSTEM_INSTRUCTION},
+        {"role": "user", "content": [
+            {"type": "image"},
+            {"type": "text", "text": f"Image context: {history}\nNew question: {text_input}"}
+        ]}
+    ]
+    input_text = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(image, input_text, return_tensors="pt").to(model.device)
+    
+    output = model.generate(**inputs, max_new_tokens=500)
+    markdown_text = processor.decode(output[0])
+    
+    response = extract_assistant_reply(markdown_text)
+    # html_output = markdown.markdown(response)
+    # return html_output
+    
     return response
+    
 
-def extract_data_from_image(image, text_input: str) -> dict:
-    response = run_inference_on_image(image, text_input)
-    return response
+def process_document(text, instructions, model, tokenizer):
+    instruction_text = ", ".join([f"{i['title']} ({i['data_type']}): {i['description']}" for i in instructions])
+    prompt = f"""You are a professional Data Analyst. Extract the following information from the document: {instruction_text}
+    If a particular field is not found in the document, return 'not found' for that field.
+    Your response should be only the specified fields and information extracted from the document in JSON format.
+    Document: {text}
+    Extracted information (JSON format):"""
+    
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
+    outputs = model.generate(**inputs, max_new_tokens=200)
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    
+    try:
+        json_response = json.loads(response)
+    except json.JSONDecodeError:
+        json_response = {"error": "Failed to parse JSON", "raw_response": response}
+    
+    return json_response
 
-# Page 1: Image Processor
-def image_processor():
+def image_processor(vision_model, vision_processor):
     st.title("Image Processor")
-    st.write("Upload an image and enter a prompt to generate output.")
+    st.write("Upload an image and ask questions about it. You can continue the conversation until you upload a new image.")
     
-    # Upload image
+    if 'image' not in st.session_state:
+        st.session_state.image = None
+    if 'conversation_history' not in st.session_state:
+        st.session_state.conversation_history = []
+    
     image_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-    prompt = st.text_area("Enter your prompt here:")
     
-    if st.button("Generate Output"):
-        start_time = time.time()
-        if image_file and prompt:
-            image = Image.open(image_file).convert("RGB")
-
-            st.image(image, caption="Uploaded Image", use_column_width=True)
-
-            # Generate output
-            response = extract_data_from_image(image, prompt)
-            
-            end_time = time.time()
-            with st.expander("Output"):
-                st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
-                st.write(response)
+    if image_file:
+        new_image = Image.open(image_file).convert("RGB")
+        if st.session_state.image != new_image:
+            st.session_state.image = new_image
+            st.session_state.conversation_history = []
+    
+    if st.session_state.image:
+        st.image(st.session_state.image, caption="Uploaded Image", use_column_width=True)
         
+        prompt = st.text_input("Ask a question about the image:")
+        
+        if prompt:
+            with st.spinner("Processing..."):
+                response = process_image(st.session_state.image, prompt, vision_model, vision_processor, 
+                                         "\n".join(st.session_state.conversation_history))
+            
+            st.session_state.conversation_history.append(f"Q: {prompt}\nA: {response}")
+            
+            with st.expander("Conversation History", expanded=True):
+                for entry in st.session_state.conversation_history:
+                    st.markdown(entry, unsafe_allow_html=True)
+                    st.write("---")
 
-# Page 2: File Processor
-def file_processor():
+def file_processor(text_model, text_tokenizer):
     st.title("File Processor")
     
-    st.markdown("### Upload Files")
-    uploaded_files = st.file_uploader("Upload a supported file", accept_multiple_files=True, type=["pdf", "xlsx", "csv", "tsv", "docx", "doc", "txt"])
+    uploaded_files = st.file_uploader("Upload supported files", accept_multiple_files=True, type=["pdf", "xlsx", "csv", "tsv", "docx", "doc", "txt"])
     
     if "instructions" not in st.session_state:
         st.session_state["instructions"] = []
 
-    # Section for adding extraction instructions
     st.markdown("### Extraction Instructions")
-    st.markdown(
-        "Add instructions for extracting information from the document. The title should be unique."
-    )
-
     with st.form(key="instruction_form"):
         title = st.text_input("Title")
         data_type = st.selectbox("Data Type", ["string", "number"])
@@ -72,63 +133,51 @@ def file_processor():
         st.markdown("### Added Instructions")
         for instruction in st.session_state["instructions"]:
             with st.expander(instruction["title"]):
-                st.markdown(instruction["description"])
-                st.markdown(f"Data Type: {instruction['data_type']}")
+                st.markdown(f"{instruction['description']} (Type: {instruction['data_type']})")
     
     if st.button("Generate Output"):
-        start_time = time.time()                    
         if uploaded_files and st.session_state["instructions"]:
             with st.spinner("Processing files..."):
-                start_time = time.time()
-                extracted_texts = []
-
-                # Create temporary directory for input
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    input_dir = Path(temp_dir) / "input"
-                    input_dir.mkdir()
-
-                    for uploaded_file in uploaded_files:
-                        # Save uploaded file to temporary directory
-                        input_file = input_dir / uploaded_file.name
-                        with open(input_file, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
-
-                        extracted_text = process_files(input_file)
-                        extracted_texts.append(extracted_text)
-                
-                responses = []
-                for text in extracted_texts:
-                    file_data = extract_data_from_document(text, st.session_state["instructions"])
-                    responses.append(file_data)
+                results = []
+                for uploaded_file in uploaded_files:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as temp_file:
+                        temp_file.write(uploaded_file.getvalue())
+                        temp_file_path = Path(temp_file.name)
                     
-                # Convert responses to CSV
-                csv_data = []
-                for idx, data in enumerate(responses):
-                    if data:
-                        row = {}
-                        for instruction in st.session_state["instructions"]:
-                            title = instruction["title"]
-                            formatted_title = title.lower().replace(" ", "_")
-                            row[title] = data.get(formatted_title)
-                        csv_data.append(row)
-
-                end_time = time.time()
+                    extracted_text = process_files(temp_file_path)
+                    processed_data = process_document(extracted_text, st.session_state["instructions"], text_model, text_tokenizer)
+                    results.append({
+                        "filename": uploaded_file.name,
+                        "extracted_data": processed_data
+                    })
+                    
+                    temp_file_path.unlink()  # Delete the temporary file
                 
-                if csv_data:
-                    with st.expander("Output"):
-                        st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
-                        st.write(pd.DataFrame(csv_data))
-                else:
-                    st.warning("No data extracted from the files.")
-                    st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
+                df = pd.DataFrame([r['extracted_data'] for r in results])
+                df['filename'] = [r['filename'] for r in results]
+                
+                st.write("Processed Data:")
+                st.dataframe(df)
+                
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="Download data as CSV",
+                    data=csv,
+                    file_name="processed_data.csv",
+                    mime="text/csv",
+                )
 
+def main():
+    vision_model, vision_processor = load_llama_vision()
+    text_model, text_tokenizer = load_llama()
 
-# Main App
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Image Processor", "File Processor"])
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Go to", ["Image Processor", "File Processor"])
 
-if page == "Image Processor":
-    image_processor()
-elif page == "File Processor":
-    file_processor()
+    if page == "Image Processor":
+        image_processor(vision_model, vision_processor)
+    elif page == "File Processor":
+        file_processor(text_model, text_tokenizer)
 
+if __name__ == "__main__":
+    main()

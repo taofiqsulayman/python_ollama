@@ -1,23 +1,27 @@
-FROM ollama/ollama
+# Use an official Python runtime as a parent image
+FROM python:3.9-slim
 
-WORKDIR /root
+# Set the working directory in the container
+WORKDIR /app
 
-COPY requirements.txt ./
+# Copy the current directory contents into the container at /app
+COPY . /app
 
-COPY entrypoint.sh ./
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    software-properties-common \
+    antiword \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY app.py ./
+RUN apt-get install -y git libgl1-mesa-glx libglib2.0-0
 
-COPY utils.py ./
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ollama_setup.py ./
-
-COPY docker-startup ./
-
-RUN apt update
-RUN apt-get install -y python3 python3-pip git libgl1-mesa-glx libglib2.0-0
-RUN pip install -r requirements.txt
-
+# Make port 8501 available to the world outside this container
 EXPOSE 8501
-EXPOSE 11434
-ENTRYPOINT ["./entrypoint.sh"]
+
+# Run app.py when the container launches
+CMD ["streamlit", "run", "app.py"]

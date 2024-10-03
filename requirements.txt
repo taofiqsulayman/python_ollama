@@ -13,3 +13,5 @@ tabulate
 setuptools
 watchdog
 orjson
+transformers
+markdown
