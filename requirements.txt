@@ -15,3 +15,4 @@ watchdog
 orjson
 transformers
 markdown
+accelerate
