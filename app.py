@@ -8,22 +8,38 @@ from transformers import MllamaForConditionalGeneration, AutoProcessor, AutoMode
 import json
 from utils import process_files
 
+from huggingface_hub import login
+import os
+   # Retrieve the API token from environment variables
+hf_api_token = os.getenv("HUGGINGFACE_API_TOKEN")
+   # Log in using the token
+login(hf_api_token)
+
+
 SYSTEM_INSTRUCTION = """You are an image interpreter. Your task is to analyze the provided image, identify key elements, and provide a clear interpretation. Based on your analysis, generate a detailed summary that includes an explanation of what you see, any notable features, and potential implications or insights. Ensure your output is structured and easily understandable."""
 
 @st.cache_resource
 def load_llama_vision():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
     model = MllamaForConditionalGeneration.from_pretrained(
         "meta-llama/Llama-3.2-11B-Vision-Instruct",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
         device_map="auto",
-    )
+    ).to(device)
     processor = AutoProcessor.from_pretrained("meta-llama/Llama-3.2-11B-Vision-Instruct")
     return model, processor
 
 @st.cache_resource
 def load_llama():
-    model = AutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3.1-8B-Instruct")
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3.1-8B-Instruct")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        "meta-llama/Llama-3.1-8B-Instruct",
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        device_map="auto",
+    ).to(device)
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
     return model, tokenizer
 
 def extract_assistant_reply(input_string):

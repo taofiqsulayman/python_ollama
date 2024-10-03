@@ -16,3 +16,4 @@ orjson
 transformers
 markdown
 accelerate
+huggingface_hub
