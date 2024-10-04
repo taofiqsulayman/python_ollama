@@ -33,7 +33,7 @@ def load_llama():
     tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
     return model, tokenizer
 
-def bot_process(image, prompt, model, processor, history, max_new_tokens=500):
+def bot_process(image, prompt, model, processor, history, max_new_tokens=250):
     txt = prompt
     ext_buffer = f"{txt}"
     
@@ -51,27 +51,25 @@ def bot_process(image, prompt, model, processor, history, max_new_tokens=500):
             messages.append({"role": "user", "content": [{"type": "text", "text": msg[0]}]})
             messages.append({"role": "assistant", "content": [{"type": "text", "text": msg[1]}]})
 
-    if len(image) == 1:
-        if isinstance(image[0], str):
-            img = Image.open(image[0]).convert("RGB")
-        else:
-            img = Image.open(image[0]["path"]).convert("RGB")
-        images.append(img)
+    # Since we only expect one image, we check if `image` is not None
+    if image is not None:
+        images.append(image)
         messages.append({"role": "user", "content": [{"type": "text", "text": txt}, {"type": "image"}]})
     else:
         messages.append({"role": "user", "content": [{"type": "text", "text": txt}]})
 
     texts = processor.apply_chat_template(messages, add_generation_prompt=True)
 
-    if images == []:
+    if not images:  # If there are no images
         inputs = processor(text=texts, return_tensors="pt").to(model.device)
-    else:
+    else:  # If we have images
         inputs = processor(text=texts, images=images, return_tensors="pt").to(model.device)
 
     outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
     generated_text = processor.decode(outputs[0], skip_special_tokens=True)
     
     return generated_text
+
 
 def process_image(prompt, image, model, processor, history):
     return bot_process(image, prompt, model, processor, history)
