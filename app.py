@@ -4,73 +4,84 @@ from pathlib import Path
 from PIL import Image
 import pandas as pd
 import torch
-from transformers import MllamaForConditionalGeneration, AutoProcessor, AutoModelForCausalLM, AutoTokenizer
+from transformers import MllamaForConditionalGeneration, AutoProcessor, AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 import json
+from threading import Thread
 from utils import process_files
 
 from huggingface_hub import login
 import os
-   # Retrieve the API token from environment variables
 hf_api_token = os.getenv("HUGGINGFACE_API_TOKEN")
-   # Log in using the token
 login(hf_api_token)
 
 
-SYSTEM_INSTRUCTION = """You are an image interpreter. Your task is to analyze the provided image, identify key elements, and provide a clear interpretation. Based on your analysis, generate a detailed summary that includes an explanation of what you see, any notable features, and potential implications or insights. Ensure your output is structured and easily understandable."""
-
 @st.cache_resource
 def load_llama_vision():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    ckpt = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+    model = MllamaForConditionalGeneration.from_pretrained(ckpt, torch_dtype=torch.bfloat16).to("cuda")
+    processor = AutoProcessor.from_pretrained(ckpt)
     
-    model = MllamaForConditionalGeneration.from_pretrained(
-        "meta-llama/Llama-3.2-11B-Vision-Instruct",
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-        device_map="auto",
-    )
-    processor = AutoProcessor.from_pretrained("meta-llama/Llama-3.2-11B-Vision-Instruct")
     return model, processor
 
 @st.cache_resource
-def load_llama():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+def load_llama():   
     model = AutoModelForCausalLM.from_pretrained(
         "meta-llama/Llama-3.1-8B-Instruct",
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        torch_dtype=torch.float16,
         device_map="auto",
-    )
+    ).to("cuda")
     tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
     return model, tokenizer
 
-def extract_assistant_reply(input_string):
-    start_tag = "<|start_header_id|>assistant<|end_header_id|>"
-    start_index = input_string.find(start_tag)
-    if start_index == -1:
-        return "Assistant's reply not found."
-    start_index += len(start_tag)
-    assistant_reply = input_string[start_index:].strip()
-    return assistant_reply
+def bot_streaming(image, prompt, model, processor, history, max_new_tokens=250):
+    txt = prompt
+    ext_buffer = f"{txt}"
+    
+    messages = [] 
+    images = []
+    
+    for i, msg in enumerate(history): 
+        if isinstance(msg[0], tuple):
+            messages.append({"role": "user", "content": [{"type": "text", "text": history[i+1][0]}, {"type": "image"}]})
+            messages.append({"role": "assistant", "content": [{"type": "text", "text": history[i+1][1]}]})
+            images.append(Image.open(msg[0][0]).convert("RGB"))
+        elif isinstance(history[i-1], tuple) and isinstance(msg[0], str):
+            pass
+        elif isinstance(history[i-1][0], str) and isinstance(msg[0], str):
+            messages.append({"role": "user", "content": [{"type": "text", "text": msg[0]}]})
+            messages.append({"role": "assistant", "content": [{"type": "text", "text": msg[1]}]})
 
-def process_image(image, text_input, model, processor, history):
-    messages = [
-        {"role": "system", "content": SYSTEM_INSTRUCTION},
-        {"role": "user", "content": [
-            {"type": "image"},
-            {"type": "text", "text": f"Image context: {history}\nNew question: {text_input}"}
-        ]}
-    ]
-    input_text = processor.apply_chat_template(messages, add_generation_prompt=True)
-    inputs = processor(image, input_text, return_tensors="pt").to(model.device)
+    if len(image) == 1:
+        if isinstance(image[0], str):
+            img = Image.open(image[0]).convert("RGB")
+        else:
+            img = Image.open(image[0]["path"]).convert("RGB")
+        images.append(img)
+        messages.append({"role": "user", "content": [{"type": "text", "text": txt}, {"type": "image"}]})
+    else:
+        messages.append({"role": "user", "content": [{"type": "text", "text": txt}]})
+
+    texts = processor.apply_chat_template(messages, add_generation_prompt=True)
+
+    if images == []:
+        inputs = processor(text=texts, return_tensors="pt").to(model.device)
+    else:
+        inputs = processor(text=texts, images=images, return_tensors="pt").to(model.device)
+
+    streamer = TextIteratorStreamer(processor, skip_special_tokens=True, skip_prompt=True)
+    generation_kwargs = dict(inputs, streamer=streamer, max_new_tokens=max_new_tokens)
+    buffer = ""
     
-    output = model.generate(**inputs, max_new_tokens=500)
-    markdown_text = processor.decode(output[0])
+    thread = Thread(target=model.generate, kwargs=generation_kwargs)
+    thread.start()
     
-    response = extract_assistant_reply(markdown_text)
-    # html_output = markdown.markdown(response)
-    # return html_output
-    
-    return response
-    
+    for new_text in streamer:
+        buffer += new_text
+        yield buffer
+
+def process_image(prompt, image, model, processor, history):
+    return bot_streaming(image, prompt, model, processor, history)
+
 
 def process_document(text, instructions, model, tokenizer):
     instruction_text = ", ".join([f"{i['title']} ({i['data_type']}): {i['description']}" for i in instructions])
@@ -80,8 +91,8 @@ def process_document(text, instructions, model, tokenizer):
     Document: {text}
     Extracted information (JSON format):"""
     
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
-    outputs = model.generate(**inputs, max_new_tokens=200)
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
+    outputs = model.generate(**inputs)
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)
     
     try:
@@ -115,8 +126,7 @@ def image_processor(vision_model, vision_processor):
         
         if prompt:
             with st.spinner("Processing..."):
-                response = process_image(st.session_state.image, prompt, vision_model, vision_processor, 
-                                         "\n".join(st.session_state.conversation_history))
+                response = process_image(prompt, st.session_state.image, vision_model, vision_processor, st.session_state.conversation_history)
             
             st.session_state.conversation_history.append(f"Q: {prompt}\nA: {response}")
             
@@ -167,7 +177,7 @@ def file_processor(text_model, text_tokenizer):
                         "extracted_data": processed_data
                     })
                     
-                    temp_file_path.unlink()  # Delete the temporary file
+                    temp_file_path.unlink()
                 
                 df = pd.DataFrame([r['extracted_data'] for r in results])
                 df['filename'] = [r['filename'] for r in results]
