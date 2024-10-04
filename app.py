@@ -33,7 +33,7 @@ def load_llama():
     tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
     return model, tokenizer
 
-def bot_streaming(image, prompt, model, processor, history, max_new_tokens=250):
+def bot_process(image, prompt, model, processor, history, max_new_tokens=500):
     txt = prompt
     ext_buffer = f"{txt}"
     
@@ -68,20 +68,13 @@ def bot_streaming(image, prompt, model, processor, history, max_new_tokens=250):
     else:
         inputs = processor(text=texts, images=images, return_tensors="pt").to(model.device)
 
-    streamer = TextIteratorStreamer(processor, skip_special_tokens=True, skip_prompt=True)
-    generation_kwargs = dict(inputs, streamer=streamer, max_new_tokens=max_new_tokens)
-    buffer = ""
+    outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
+    generated_text = processor.decode(outputs[0], skip_special_tokens=True)
     
-    thread = Thread(target=model.generate, kwargs=generation_kwargs)
-    thread.start()
-    
-    for new_text in streamer:
-        buffer += new_text
-        yield buffer
+    return generated_text
 
 def process_image(prompt, image, model, processor, history):
-    return bot_streaming(image, prompt, model, processor, history)
-
+    return bot_process(image, prompt, model, processor, history)
 
 def process_document(text, instructions, model, tokenizer):
     instruction_text = ", ".join([f"{i['title']} ({i['data_type']}): {i['description']}" for i in instructions])
@@ -91,8 +84,8 @@ def process_document(text, instructions, model, tokenizer):
     Document: {text}
     Extracted information (JSON format):"""
     
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
-    outputs = model.generate(**inputs)
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096)
+    outputs = model.generate(**inputs, max_new_tokens=1000)
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)
     
     try:
