@@ -18,7 +18,7 @@ login(hf_api_token)
 @st.cache_resource
 def load_llama_vision():
     ckpt = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-    model = MllamaForConditionalGeneration.from_pretrained(ckpt, torch_dtype=torch.bfloat16).to("cuda")
+    model = MllamaForConditionalGeneration.from_pretrained(ckpt, torch_dtype=torch.bfloat16)
     processor = AutoProcessor.from_pretrained(ckpt)
     
     return model, processor
@@ -29,7 +29,7 @@ def load_llama():
         "meta-llama/Llama-3.1-8B-Instruct",
         torch_dtype=torch.float16,
         device_map="auto",
-    ).to("cuda")
+    )
     tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
     return model, tokenizer
 
