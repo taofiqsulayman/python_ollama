@@ -1,10 +1,7 @@
 FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-devel
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    python3-dev \
-    python3-pip \
-    build-essential \
+RUN apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
     poppler-utils \
