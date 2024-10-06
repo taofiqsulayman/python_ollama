@@ -19,10 +19,10 @@ os.environ['USE_TORCH'] = '1'
 image_llm = LLM(
         model="microsoft/Phi-3.5-vision-instruct",
         trust_remote_code=True,
-        max_num_seqs=5,
+        # max_num_seqs=5,
         mm_processor_kwargs={"num_crops": 16},
         dtype="half",
-        max_model_len=5120
+        max_model_len=10240
     )
 # image_llm = LLM(model="meta-llama/Llama-3.2-11B-Vision-Instruct")
 
