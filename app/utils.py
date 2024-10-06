@@ -17,14 +17,14 @@ login(hf_api_token)
 os.environ['USE_TORCH'] = '1'
 
 image_llm = LLM(
-    model="microsoft/Phi-3.5-vision-instruct",
-    trust_remote_code=True,  # Required to load Phi-3.5-vision
-    max_model_len=4096,  # Otherwise, it may not fit in smaller GPUs
-    # limit_mm_per_prompt={"image": 2},  # The maximum number to accept   
+        model="microsoft/Phi-3-vision-128k-instruct",
+        trust_remote_code=True,
+        max_num_seqs=5,
+        mm_processor_kwargs={"num_crops": 16},
     )
 # image_llm = LLM(model="meta-llama/Llama-3.2-11B-Vision-Instruct")
 
-file_llm = LLM(model="meta-llama/Llama-3.1-8B-Instruct", trust_remote_code=True)
+file_llm = LLM(model="meta-llama/Llama-3.1-8B-Instruct", trust_remote_code=True, max_model_len=4096)
 # file_llm = LLM(model="meta-llama/Llama-3.2-3B-Instruct")
 
 # Load a pre-trained model for ocr
