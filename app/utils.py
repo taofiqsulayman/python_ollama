@@ -111,7 +111,7 @@ def get_images_response(image, text_input: str):
         "multi_modal_data": {"image": image},
     })
 
-    return output.outputs[0].text
+    return output
 
 # def process_doctr_output(doctr_output):
 #     text = ""

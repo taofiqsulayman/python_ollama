@@ -37,6 +37,7 @@ def image_processor():
             end_time = time.time()
             with st.expander("Output"):
                 st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
+                st.markdown(response)
                 st.write(response)
         
 
