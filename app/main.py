@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 import os
 from huggingface_hub import login
-from utils import get_images_response, 
+from utils import get_images_response 
 # get_files_response, process_files
 
 hf_api_token = os.getenv("HF_TOKEN")
