@@ -1,7 +1,11 @@
 FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-devel
 
+# Set the environment variable to avoid tzdata prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && \
+    apt-get install -y \
     python3-pip \
     python3-dev \
     build-essential \
@@ -10,15 +14,17 @@ RUN apt-get update && apt-get install -y \
     antiword \
     poppler-utils \
     libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+    libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install any additional system dependencies for document handling (optional)
+# Upgrade pip
 RUN pip install --upgrade pip
 
-# Install Python dependencies
+# Copy requirements.txt first to leverage Docker cache
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the Streamlit app code to the container
 COPY . /app
