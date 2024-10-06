@@ -1,5 +1,4 @@
-FROM vllm/vllm-openai:latest
-
+FROM pytorch/pytorch:2.1.2-cuda12.1-cudnn8-devel
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
