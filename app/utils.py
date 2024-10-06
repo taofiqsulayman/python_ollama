@@ -17,7 +17,7 @@ login(hf_api_token)
 os.environ['USE_TORCH'] = '1'
 
 image_llm = LLM(
-        model="microsoft/Phi-3-vision-128k-instruct",
+        model="microsoft/Phi-3.5-vision-instruct",
         trust_remote_code=True,
         max_num_seqs=5,
         mm_processor_kwargs={"num_crops": 16},
