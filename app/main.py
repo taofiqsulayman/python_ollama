@@ -26,9 +26,8 @@ def image_processor():
     if st.button("Generate Output"):
         start_time = time.time()
         if image_file and prompt:
-            # Load image
-            # image = Image.open(image_file)
-            image = Image.fromarray(image_file).convert("RGB")
+            # Load image using PIL
+            image = Image.open(image_file).convert("RGB")
 
             st.image(image, caption="Uploaded Image", use_column_width=True)
 
