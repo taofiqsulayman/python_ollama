@@ -2,15 +2,15 @@ FROM nvidia/cuda:12.1.1-base-ubuntu22.04
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    Python3 \
     python3-pip \
+    python3-dev \
+    build-essential \
+    curl \
+    software-properties-common \
+    antiword \
+    poppler-utils \
     libgl1-mesa-glx \
     libglib2.0-0 \
-    poppler-utils \
-    antiword \
-    git \
-    wget \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Install any additional system dependencies for document handling (optional)
