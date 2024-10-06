@@ -11,3 +11,4 @@ pymupdf4llm
 pillow
 tabulate
 setuptools
+huggingface_hub

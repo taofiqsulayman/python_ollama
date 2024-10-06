@@ -3,8 +3,14 @@ from PIL import Image
 import time
 import tempfile
 from pathlib import Path
-
+import os
+from huggingface_hub import login
 from utils import get_images_response, get_files_response, process_files
+
+hf_api_token = os.getenv("HF_TOKEN")
+login(hf_api_token)
+
+
 
 
 # Page 1: Image Processor
@@ -103,11 +109,9 @@ def file_processor():
                             row[title] = data.get(formatted_title)
                         csv_data.append(row)
 
-                    
-                    
-        
-    
-
+                end_time = time.time()
+                st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
+                st.markdown(csv_data)
 
 # Main App
 st.sidebar.title("Navigation")

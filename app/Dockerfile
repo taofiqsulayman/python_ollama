@@ -1,8 +1,13 @@
-# Base image for Python and dependencies
-FROM python:3.9-slim
+FROM vllm/vllm-openai:latest
+
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    python3-dev \
+    python3-pip \
+    build-essential \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     poppler-utils \
     antiword \
     git \

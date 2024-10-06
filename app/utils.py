@@ -9,6 +9,10 @@ import fitz  # PyMuPDF
 import pymupdf4llm
 from docx import Document
 
+from huggingface_hub import login
+
+hf_api_token = os.getenv("HF_TOKEN")
+login(hf_api_token)
 
 os.environ['USE_TORCH'] = '1'
 
