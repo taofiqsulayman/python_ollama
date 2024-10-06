@@ -39,6 +39,6 @@ RUN pip install vllm==0.3.3 --no-cache-dir
 # environment variable to authenticate your API
 ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server", \
             "--host", "0.0.0.0", "--port", "80", \
-            "--model", "meta-llama/Llama-3.1-8B-Instruct", \
+            "--model", "facebook/opt-125m", \
             # depending on your GPU, you might or might not need to pass --dtype
             "--dtype=half"]
