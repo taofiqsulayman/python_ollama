@@ -2,7 +2,7 @@ FROM nvidia/cuda:12.1.1-base-ubuntu22.04
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    Python3-dev \
+    Python3 \
     python3-pip \
     libgl1-mesa-glx \
     libglib2.0-0 \
