@@ -21,10 +21,15 @@ image_llm = LLM(
         trust_remote_code=True,
         max_num_seqs=5,
         mm_processor_kwargs={"num_crops": 16},
+        dtype="half",
     )
 # image_llm = LLM(model="meta-llama/Llama-3.2-11B-Vision-Instruct")
 
-file_llm = LLM(model="meta-llama/Llama-3.1-8B-Instruct", trust_remote_code=True, max_model_len=4096)
+file_llm = LLM(
+    model="meta-llama/Llama-3.1-8B-Instruct", 
+    trust_remote_code=True, 
+    dtype="half",
+)
 # file_llm = LLM(model="meta-llama/Llama-3.2-3B-Instruct")
 
 # Load a pre-trained model for ocr
