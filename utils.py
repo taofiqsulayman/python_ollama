@@ -88,5 +88,7 @@ def process_files(file_path):
         return process_word_docs(file_path)
     elif file_path.suffix in [".txt", ".TXT"]:
         return process_txt_file(file_path)
+    elif file_path.suffix in [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]:
+        return extract_text_with_ocr(file_path)
     else:
         raise ValueError("Unsupported file format. Please use a supported file format.")

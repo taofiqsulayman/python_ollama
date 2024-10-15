@@ -1,88 +1,48 @@
 import streamlit as st
 import tempfile
 from pathlib import Path
-from PIL import Image
 import pandas as pd
-from ollama_setup import run_inference_on_document, run_inference_on_image
+from ollama_setup import run_inference_on_document
 from utils import process_files
-
 import time
 
 def extract_data_from_document(text: str, instructions: list) -> dict:
     response = run_inference_on_document(text, instructions)
     return response
 
-def extract_data_from_image(image, text_input: str) -> dict:
-    response = run_inference_on_image(image, text_input)
-    return response
+st.set_page_config(layout="wide", page_title="File Processor", page_icon="📄")
+st.title("File Processor")
 
-# Page 1: Image Processor
-def image_processor():
-    st.title("Image Processor")
-    st.write("Upload an image and enter a prompt to generate output.")
-    
-    # Upload image
-    image_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-    prompt = st.text_area("Enter your prompt here:")
-    
-    if st.button("Generate Output"):
-        start_time = time.time()
-        if image_file and prompt:
-            image = Image.open(image_file).convert("RGB")
+def reset_state():
+    st.session_state["stage"] = "upload"
+    st.session_state["extracted_texts"] = []
+    st.session_state["instructions"] = []
+    st.session_state["uploaded_files"] = []
 
-            st.image(image, caption="Uploaded Image", use_column_width=True)
+if "stage" not in st.session_state:
+    reset_state()
 
-            # Generate output
-            response = extract_data_from_image(image, prompt)
-            
-            end_time = time.time()
-            with st.expander("Output"):
-                st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
-                st.write(response)
-        
+def go_back(target_stage):
+    if target_stage == "upload":
+        reset_state()
+    elif target_stage == "show_text":
+        st.session_state["stage"] = "show_text"
+        st.session_state["instructions"] = [] 
+    elif target_stage == "add_instructions":
+        st.session_state["stage"] = "add_instructions"
 
-# Page 2: File Processor
-def file_processor():
-    st.title("File Processor")
-    
-    st.markdown("### Upload Files")
-    uploaded_files = st.file_uploader("Upload a supported file", accept_multiple_files=True, type=["pdf", "xlsx", "csv", "tsv", "docx", "doc", "txt"])
-    
-    if "instructions" not in st.session_state:
-        st.session_state["instructions"] = []
+# Two-column layout
+left_col, right_col = st.columns(2)
 
-    # Section for adding extraction instructions
-    st.markdown("### Extraction Instructions")
-    st.markdown(
-        "Add instructions for extracting information from the document. The title should be unique."
-    )
+if st.session_state["stage"] == "upload":
+    with left_col:
+        st.markdown("### Upload Files")
+        uploaded_files = st.file_uploader("Upload a supported file", accept_multiple_files=True, type=["pdf", "xlsx", "csv", "tsv", "docx", "doc", "txt", "jpg", "jpeg", "png"])
 
-    with st.form(key="instruction_form"):
-        title = st.text_input("Title")
-        data_type = st.selectbox("Data Type", ["string", "number"])
-        description = st.text_area("Description")
-        add_button = st.form_submit_button("Add")
-
-        if add_button and title and data_type and description:
-            st.session_state["instructions"].append(
-                {"title": title, "data_type": data_type, "description": description}
-            )
-
-    if st.session_state["instructions"]:
-        st.markdown("### Added Instructions")
-        for instruction in st.session_state["instructions"]:
-            with st.expander(instruction["title"]):
-                st.markdown(instruction["description"])
-                st.markdown(f"Data Type: {instruction['data_type']}")
-    
-    if st.button("Generate Output"):
-        start_time = time.time()                    
-        if uploaded_files and st.session_state["instructions"]:
-            with st.spinner("Processing files..."):
-                start_time = time.time()
+        if st.button("Extract Text", key="extract_text_btn") and uploaded_files:
+            st.session_state["uploaded_files"] = uploaded_files
+            with st.spinner("Extracting text..."):
                 extracted_texts = []
-
-                # Create temporary directory for input
                 with tempfile.TemporaryDirectory() as temp_dir:
                     input_dir = Path(temp_dir) / "input"
                     input_dir.mkdir()
@@ -95,13 +55,74 @@ def file_processor():
 
                         extracted_text = process_files(input_file)
                         extracted_texts.append(extracted_text)
-                
-                responses = []
-                for text in extracted_texts:
+
+                st.session_state["extracted_texts"] = extracted_texts
+                st.session_state["stage"] = "show_text"
+
+if st.session_state["stage"] == "show_text":
+    with left_col:
+        st.markdown("check the extracted text")
+
+    with right_col:
+        st.markdown("### Extracted Text")
+        for idx, text in enumerate(st.session_state["extracted_texts"]):
+            with st.expander(f"File {idx + 1} - Extracted Text"):
+                st.markdown(text)
+                st.download_button("Download Extracted Text", text, file_name=f"extracted_text_{idx + 1}.txt")
+
+        if st.button("Perform AI Inferencing", key="perform_ai_btn"):
+            st.session_state["stage"] = "add_instructions"
+
+    with left_col:
+        if st.button("Back", key="back_to_upload_btn"):
+            go_back("upload")
+
+if st.session_state["stage"] == "add_instructions":
+    with left_col:
+        st.markdown("### Extraction Instructions")
+        st.markdown("Add instructions for extracting information from the document. The title should be unique.")
+        
+        with st.form(key="instruction_form"):
+            title = st.text_input("Title")
+            data_type = st.selectbox("Data Type", ["string", "number"])
+            description = st.text_area("Description")
+            add_button = st.form_submit_button("Add")
+
+            if add_button and title and data_type and description:
+                st.session_state["instructions"].append(
+                    {"title": title, "data_type": data_type, "description": description}
+                )
+
+    with right_col:
+        st.markdown("### Added Instructions")
+        if st.session_state["instructions"]:
+            st.markdown("### Added Instructions")
+            for instruction in st.session_state["instructions"]:
+                with st.expander(instruction["title"]):
+                    st.markdown(instruction["description"])
+                    st.markdown(f"Data Type: {instruction['data_type']}")
+
+        if st.button("Analyze", key="analyze_btn"):
+            st.session_state["stage"] = "analyze"
+
+    with left_col:
+        if st.button("Back", key="back_to_show_text_btn"):
+            go_back("show_text")
+
+if st.session_state["stage"] == "analyze":
+    with left_col:
+        st.markdown("Wait and check the results of the AI inference...")
+
+    with right_col:
+        st.markdown("### Analyzing Extracted Data")
+        start_time = time.time()
+        responses = []
+        if st.session_state["extracted_texts"] and st.session_state["instructions"]:
+            with st.spinner("Analyzing extracted text..."):
+                for text in st.session_state["extracted_texts"]:
                     file_data = extract_data_from_document(text, st.session_state["instructions"])
                     responses.append(file_data)
-                    
-                # Convert responses to CSV
+                
                 csv_data = []
                 for idx, data in enumerate(responses):
                     if data:
@@ -113,7 +134,7 @@ def file_processor():
                         csv_data.append(row)
 
                 end_time = time.time()
-                
+
                 if csv_data:
                     with st.expander("Output"):
                         st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
@@ -122,13 +143,6 @@ def file_processor():
                     st.warning("No data extracted from the files.")
                     st.write("Time taken: {:.2f} seconds".format(end_time - start_time))
 
-
-# Main App
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Image Processor", "File Processor"])
-
-if page == "Image Processor":
-    image_processor()
-elif page == "File Processor":
-    file_processor()
-
+    with left_col:
+        if st.button("Back", key="back_to_add_instructions_btn"):
+            go_back("add_instructions")
