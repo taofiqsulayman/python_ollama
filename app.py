@@ -15,7 +15,7 @@ st.title("File Processor")
 
 def reset_state():
     st.session_state["stage"] = "upload"
-    st.session_state["extracted_texts"] = []
+    st.session_state["extracted_files"] = []
     st.session_state["instructions"] = []
     st.session_state["uploaded_files"] = []
 
@@ -41,8 +41,8 @@ if st.session_state["stage"] == "upload":
 
         if st.button("Extract Text", key="extract_text_btn") and uploaded_files:
             st.session_state["uploaded_files"] = uploaded_files
+            extracted_files = []
             with st.spinner("Extracting text..."):
-                extracted_texts = []
                 with tempfile.TemporaryDirectory() as temp_dir:
                     input_dir = Path(temp_dir) / "input"
                     input_dir.mkdir()
@@ -54,21 +54,28 @@ if st.session_state["stage"] == "upload":
                             f.write(uploaded_file.getbuffer())
 
                         extracted_text = process_files(input_file)
-                        extracted_texts.append(extracted_text)
+                        extracted_files.append({"file_name": uploaded_file.name, "content": extracted_text})
 
-                st.session_state["extracted_texts"] = extracted_texts
+                st.session_state["extracted_files"] = extracted_files
                 st.session_state["stage"] = "show_text"
 
+# Stage 2: Show extracted text and inferencing options
 if st.session_state["stage"] == "show_text":
     with left_col:
-        st.markdown("check the extracted text")
+        st.markdown("view the extracted text from the uploaded files")
 
     with right_col:
         st.markdown("### Extracted Text")
-        for idx, text in enumerate(st.session_state["extracted_texts"]):
-            with st.expander(f"File {idx + 1} - Extracted Text"):
-                st.markdown(text)
-                st.download_button("Download Extracted Text", text, file_name=f"extracted_text_{idx + 1}.txt")
+        for idx, file_data in enumerate(st.session_state["extracted_files"]):
+            file_name = file_data["file_name"]
+            content = file_data["content"]
+            with st.expander(f"{file_name} - Extracted Text"):
+                st.markdown(content)
+                st.download_button(
+                    "Download Extracted Text",
+                    content,
+                    file_name=f"{Path(file_name).stem}_extracted.md"
+                )
 
         if st.button("Perform AI Inferencing", key="perform_ai_btn"):
             st.session_state["stage"] = "add_instructions"
@@ -77,6 +84,7 @@ if st.session_state["stage"] == "show_text":
         if st.button("Back", key="back_to_upload_btn"):
             go_back("upload")
 
+# Stage 3: Add extraction instructions
 if st.session_state["stage"] == "add_instructions":
     with left_col:
         st.markdown("### Extraction Instructions")
@@ -94,7 +102,7 @@ if st.session_state["stage"] == "add_instructions":
                 )
 
     with right_col:
-        st.markdown("### Added Instructions")
+        st.markdown("### View Instructions")
         if st.session_state["instructions"]:
             st.markdown("### Added Instructions")
             for instruction in st.session_state["instructions"]:
@@ -111,27 +119,30 @@ if st.session_state["stage"] == "add_instructions":
 
 if st.session_state["stage"] == "analyze":
     with left_col:
-        st.markdown("Wait and check the results of the AI inference...")
+        st.markdown("### Analyzing Extracted Data")
 
     with right_col:
-        st.markdown("### Analyzing Extracted Data")
+        st.markdown("### Output")
         start_time = time.time()
         responses = []
-        if st.session_state["extracted_texts"] and st.session_state["instructions"]:
+        if st.session_state["extracted_files"] and st.session_state["instructions"]:
             with st.spinner("Analyzing extracted text..."):
-                for text in st.session_state["extracted_texts"]:
-                    file_data = extract_data_from_document(text, st.session_state["instructions"])
-                    responses.append(file_data)
+                for file_data in st.session_state["extracted_files"]:
+                    file_name = file_data["file_name"]
+                    content = file_data["content"]
+                    file_response = extract_data_from_document(content, st.session_state["instructions"])
+                    responses.append({"file_name": file_name, "data": file_response})
                 
                 csv_data = []
-                for idx, data in enumerate(responses):
+                for response in responses:
+                    row = {"File Name": response["file_name"]}
+                    data = response["data"]
                     if data:
-                        row = {}
                         for instruction in st.session_state["instructions"]:
                             title = instruction["title"]
                             formatted_title = title.lower().replace(" ", "_")
                             row[title] = data.get(formatted_title)
-                        csv_data.append(row)
+                    csv_data.append(row)
 
                 end_time = time.time()
 

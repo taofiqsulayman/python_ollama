@@ -7,10 +7,10 @@ from doctr.io import DocumentFile
 import fitz  # PyMuPDF
 import pymupdf4llm
 from docx import Document
-
+import tempfile
 
 os.environ['USE_TORCH'] = '1'
-ocr_model = ocr_predictor(pretrained=True, )
+ocr_model = ocr_predictor(pretrained=True)
 
 def process_doctr_output(doctr_output):
     text = ""
@@ -21,8 +21,8 @@ def process_doctr_output(doctr_output):
                 text += line_text + " "
     return text
 
-def extract_text_with_ocr(image_file):
-    image = DocumentFile.from_images(image_file)
+def extract_text_with_ocr(image_path):
+    image = DocumentFile.from_images([image_path])
     text = ocr_model(image)
     extracted_text = process_doctr_output(text)
     return extracted_text
@@ -35,8 +35,12 @@ def process_pdf(file_path):
         page = doc.load_page(i)
         check_text = page.get_text("text")
         if not check_text.strip():
-            image_file = page.get_pixmap()
-            extracted_text += extract_text_with_ocr(image_file)
+            pixmap = page.get_pixmap()
+            # Save the Pixmap as a temporary PNG file
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_img_file:
+                pixmap.save(temp_img_file.name)
+                extracted_text += extract_text_with_ocr(temp_img_file.name)
+                os.remove(temp_img_file.name)  # Remove the temporary file after processing
         else:
             extracted_text += pymupdf4llm.to_markdown(file_path, pages=[i])
     return extracted_text
@@ -79,7 +83,6 @@ def process_txt_file(file_path):
     return text
 
 def process_files(file_path):
-
     if file_path.suffix in [".pdf", ".PDF"]:
         return process_pdf(file_path)
     elif file_path.suffix in [".csv", ".CSV", ".tsv", ".TSV", ".xlsx", ".XLSX"]:
