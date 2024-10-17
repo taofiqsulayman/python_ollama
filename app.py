@@ -59,7 +59,6 @@ if st.session_state["stage"] == "upload":
                 st.session_state["extracted_files"] = extracted_files
                 st.session_state["stage"] = "show_text"
 
-# Stage 2: Show extracted text and inferencing options
 if st.session_state["stage"] == "show_text":
     with left_col:
         st.markdown("view the extracted text from the uploaded files")
@@ -84,7 +83,6 @@ if st.session_state["stage"] == "show_text":
         if st.button("Back", key="back_to_upload_btn"):
             go_back("upload")
 
-# Stage 3: Add extraction instructions
 if st.session_state["stage"] == "add_instructions":
     with left_col:
         st.markdown("### Extraction Instructions")

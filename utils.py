@@ -36,11 +36,11 @@ def process_pdf(file_path):
         check_text = page.get_text("text")
         if not check_text.strip():
             pixmap = page.get_pixmap()
-            # Save the Pixmap as a temporary PNG file
+            
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_img_file:
                 pixmap.save(temp_img_file.name)
                 extracted_text += extract_text_with_ocr(temp_img_file.name)
-                os.remove(temp_img_file.name)  # Remove the temporary file after processing
+                os.remove(temp_img_file.name)  
         else:
             extracted_text += pymupdf4llm.to_markdown(file_path, pages=[i])
     return extracted_text
@@ -67,8 +67,8 @@ def process_word_docs(file_path):
         # Convert .doc to plain text using antiword
         result = subprocess.run(["antiword", file_path], capture_output=True, text=True)
         plain_text = result.stdout
+        
     elif file_path.suffix == ".docx":
-        # Load .docx file
         doc = Document(file_path)
         full_text = [para.text for para in doc.paragraphs]
         plain_text = "\n".join(full_text)
