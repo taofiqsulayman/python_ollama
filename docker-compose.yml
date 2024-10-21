@@ -1,5 +1,50 @@
 version: '3'
+
 services:
+  db:
+    image: postgres:14
+    container_name: db
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=pa$$w0rd
+      - POSTGRES_DB=ollama_db
+    ports:
+      - "5432:5439"
+    networks:
+      - ollama_network
+
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: keycloak
+    restart: always
+    environment:
+      - KC_HOSTNAME=localhost
+      - KC_HOSTNAME_PORT=8080
+      - KC_HOSTNAME_STRICT_BACKCHANNEL=false
+      - KC_HTTP_ENABLED=true
+      - KC_HOSTNAME_STRICT_HTTPS=false
+      - KC_HEALTH_ENABLED=true
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://db/ollama_db
+      - KC_DB_USERNAME=postgres
+      - KC_DB_PASSWORD=pa$$w0rd
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    command: 
+      - start
+    networks:
+      - ollama_network
+
+    
+
   app:
     build:
       context: .
@@ -14,3 +59,8 @@ services:
 
 volumes:
   ollama-data:
+  postgres_data:
+
+
+networks:
+  ollama_network:

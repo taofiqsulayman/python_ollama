@@ -5,13 +5,31 @@ import pandas as pd
 from ollama_setup import run_inference_on_document
 from utils import process_files
 import time
+from dataclasses import asdict
+from streamlit_keycloak import login
+
+
+# Authentication with Keycloak
+auth_status, auth_user = login(
+    keycloak_url="http://localhost:8080/auth",
+    realm_name="text-extraction",
+    client_id="text-extraction-realm"
+)
+http://localhost:8080/realms/text-extraction/account
+
+# Show login screen if not authenticated
+if not auth_status:
+    st.warning("Please log in to access this page.")
+    st.stop()
+
+st.set_page_config(layout="wide", page_title="File Processor", page_icon="📄")
+st.title("File Processor")
+
 
 def extract_data_from_document(text: str, instructions: list) -> dict:
     response = run_inference_on_document(text, instructions)
     return response
 
-st.set_page_config(layout="wide", page_title="File Processor", page_icon="📄")
-st.title("File Processor")
 
 def reset_state():
     st.session_state["stage"] = "upload"
