@@ -5,11 +5,11 @@ from psycopg2 import sql
 def create_connection():
     try:
         connection = psycopg2.connect(
-            user="your_username",
-            password="your_password",
-            host="localhost",
+            user="root",
+            password="pa$$w0rd",
+            host="127.0.0.1",
             port="5432",
-            database="your_database"
+            database="ollama_db"
         )
         return connection
     except (Exception, psycopg2.Error) as error:
