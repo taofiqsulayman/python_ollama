@@ -6,21 +6,21 @@ def create_table():
     if connection is None:
         return
 
-    try:
-        cursor = connection.cursor()
-        create_table_query = '''CREATE TABLE IF NOT EXISTS employees (
-                                    ID INT PRIMARY KEY,
-                                    NAME TEXT NOT NULL,
-                                    AGE INT NOT NULL,
-                                    SALARY REAL);'''
-        cursor.execute(create_table_query)
-        connection.commit()
-        print("Table created successfully")
-    except (Exception, psycopg2.Error) as error:
-        print("Error while creating table", error)
-    finally:
-        cursor.close()
-        close_connection(connection)
+    # try:
+    #     cursor = connection.cursor()
+    #     create_table_query = '''CREATE TABLE IF NOT EXISTS employees (
+    #                                 ID INT PRIMARY KEY,
+    #                                 NAME TEXT NOT NULL,
+    #                                 AGE INT NOT NULL,
+    #                                 SALARY REAL);'''
+    #     cursor.execute(create_table_query)
+    #     connection.commit()
+    #     print("Table created successfully")
+    # except (Exception, psycopg2.Error) as error:
+    #     print("Error while creating table", error)
+    # finally:
+    #     cursor.close()
+    #     close_connection(connection)
 
 def insert_employee(employee_id, name, age, salary):
     connection = create_connection()

@@ -12,64 +12,64 @@ services:
       - POSTGRES_PASSWORD=pa$$w0rd
       - POSTGRES_DB=ollama_db
     ports:
-      - "5439:5432"
-    networks:
-      - ollama_network
+      - "54320:5432"
+    # networks:
+    #   - ollama_network
 
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:24.0.4
-    container_name: keycloak
-    restart: always
-    environment:
-      - KC_HOSTNAME=localhost
-      - KC_HOSTNAME_PORT=8080
-      - KC_HOSTNAME_STRICT_BACKCHANNEL=false
-      - KC_HTTP_ENABLED=true
-      - KC_HOSTNAME_STRICT_HTTPS=false
-      - KC_HEALTH_ENABLED=true
-      - KEYCLOAK_ADMIN=admin
-      - KEYCLOAK_ADMIN_PASSWORD=admin
-      - KC_DB=postgres
-      - KC_DB_URL=jdbc:postgresql://db/ollama_db
-      - KC_DB_USERNAME=root
-      - KC_DB_PASSWORD=pa$$w0rd
-    ports:
-      - "8080:8080"
-    depends_on:
-      - db
-    command: 
-      - start-dev
-    networks:
-      - ollama_network
+#   keycloak:
+#     image: quay.io/keycloak/keycloak:24.0.4
+#     container_name: keycloak
+#     restart: always
+#     environment:
+#       - KC_HOSTNAME=localhost
+#       - KC_HOSTNAME_PORT=8080
+#       - KC_HOSTNAME_STRICT_BACKCHANNEL=false
+#       - KC_HTTP_ENABLED=true
+#       - KC_HOSTNAME_STRICT_HTTPS=false
+#       - KC_HEALTH_ENABLED=true
+#       - KEYCLOAK_ADMIN=admin
+#       - KEYCLOAK_ADMIN_PASSWORD=admin
+#       - KC_DB=postgres
+#       - KC_DB_URL=jdbc:postgresql://db/ollama_db
+#       - KC_DB_USERNAME=root
+#       - KC_DB_PASSWORD=pa$$w0rd
+#     ports:
+#       - "8080:8080"
+#     depends_on:
+#       - db
+#     command: 
+#       - start-dev
+#     networks:
+#       - ollama_network
     
 
     
 
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "11434:11434"  # Ollama port
-      - "8501:8501"    # Streamlit port
-    volumes:
-      - ./data/ollama:/root/.ollama
-    depends_on:
-      - db
-      - keycloak
-    environment:
-      - OLLAMA_MODEL=llama3.2
-      - DATABASE_HOST=db
-      - DATABASE_PORT=5432
-      - DATABASE_NAME=ollama_db
-      - DATABASE_USER=root
-      - DATABASE_PASSWORD=pa$$w0rd
+#   app:
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+#     ports:
+#       - "11434:11434"  # Ollama port
+#       - "8501:8501"    # Streamlit port
+#     volumes:
+#       - ./data/ollama:/root/.ollama
+#     depends_on:
+#       - db
+#       - keycloak
+#     environment:
+#       - OLLAMA_MODEL=llama3.2
+#       - DATABASE_HOST=db
+#       - DATABASE_PORT=5432
+#       - DATABASE_NAME=ollama_db
+#       - DATABASE_USER=root
+#       - DATABASE_PASSWORD=pa$$w0rd
 
 volumes:
-  ollama-data:
+  # ollama-data:
   postgres_data:
 
 
-networks:
-  ollama_network:
+# networks:
+#   ollama_network:
