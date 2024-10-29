@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from sqlalchemy import desc
+import json
 
 from config import init_config, get_database_url
 
@@ -23,7 +24,7 @@ import time
 config = init_config()
 db_session = init_db(get_database_url())
 
-if os.getenv("DEBUG") == "True":
+if os.getenv("DEV") == "True":
     from dev_auth import DevAuth
     keycloak_auth = DevAuth()
 else:
@@ -80,19 +81,27 @@ def save_extraction(session: Session, user_id: str, file_name: str, content: str
     session.commit()
     return extraction
 
-def save_analysis(session: Session, user_id: str, extraction_id: int, instructions: List[Dict[str, Any]], results: Dict[str, Any]) -> Analysis:
-    """Save analysis results to database with status"""
-    analysis = Analysis(
+def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict[str, Any]], instructions: List[Dict[str, Any]]) -> Analysis:
+    """Save a batch of analysis results together"""
+    batch_analysis = Analysis(
         user_id=user_id,
-        extraction_id=extraction_id,
+        extraction_id=None,  # This will now be a list in the results
         instructions=instructions,
-        results=results,
+        results={
+            'batch_results': analyses_data,
+            'summary': {
+                'total_files': len(analyses_data),
+                'timestamp': datetime.utcnow().isoformat(),
+                'extraction_ids': [data['extraction_id'] for data in analyses_data]
+            }
+        },
         status="completed",
         created_at=datetime.utcnow()
     )
-    session.add(analysis)
+    session.add(batch_analysis)
     session.commit()
-    return analysis
+    return batch_analysis
+
 
 def get_user_history(session: Session, user_id: str) -> Dict[str, List]:
     """Fetch user's extraction and analysis history"""
@@ -269,11 +278,11 @@ def add_instructions_page():
 @login_required
 @role_required("advanced")
 def analyze_page():
-    """Render analysis page"""
+    """Render analysis page with normalized data handling"""
     st.title("Analysis Results")
     
     start_time = time.time()
-    responses = []
+    analyses_data = []
     
     session = db_session()
     try:
@@ -284,45 +293,164 @@ def analyze_page():
                     st.session_state.instructions
                 )
                 
-                save_analysis(
-                    session,
-                    st.session_state.user_id,
-                    file_data["extraction_id"],
-                    st.session_state.instructions,
-                    response
-                )
-                
-                responses.append({
-                    "file_name": file_data["file_name"],
-                    "data": response
-                })
-        
-        # Create DataFrame for display
-        df_data = []
-        for response in responses:
-            row = {"File Name": response["file_name"]}
-            data = response["data"]
-            if data:
+                # Normalize the response data
+                normalized_response = {}
                 for instruction in st.session_state.instructions:
                     title = instruction["title"]
                     formatted_title = title.lower().replace(" ", "_")
-                    row[title] = data.get(formatted_title)
+                    
+                    # Get the value from response, or None if not found
+                    value = response.get(formatted_title)
+                    
+                    # Convert lists to string representation if needed
+                    if isinstance(value, list):
+                        value = '; '.join(str(item) for item in value)
+                    # Convert dictionaries to string representation if needed
+                    elif isinstance(value, dict):
+                        value = str(value)
+                    # Ensure other values are string or numeric
+                    elif value is not None:
+                        if not isinstance(value, (str, int, float)):
+                            value = str(value)
+                    
+                    normalized_response[formatted_title] = value
+                
+                analyses_data.append({
+                    "file_name": file_data["file_name"],
+                    "extraction_id": file_data["extraction_id"],
+                    "results": normalized_response
+                })
+            
+            # Save batch analysis
+            batch_analysis = save_batch_analysis(
+                session,
+                st.session_state.user_id,
+                analyses_data,
+                st.session_state.instructions
+            )
+        
+        # Create DataFrame with normalized data
+        df_data = []
+        column_types = {}  # Track consistent column types
+        
+        # First pass: determine column types
+        for analysis in analyses_data:
+            for instruction in st.session_state.instructions:
+                title = instruction["title"]
+                formatted_title = title.lower().replace(" ", "_")
+                value = analysis["results"].get(formatted_title)
+                
+                if value is not None:
+                    if isinstance(value, (int, float)):
+                        column_types[formatted_title] = 'numeric'
+                    else:
+                        column_types[formatted_title] = 'string'
+        
+        # Second pass: create normalized rows
+        for analysis in analyses_data:
+            row = {"File Name": analysis["file_name"]}
+            
+            for instruction in st.session_state.instructions:
+                title = instruction["title"]
+                formatted_title = title.lower().replace(" ", "_")
+                value = analysis["results"].get(formatted_title)
+                
+                # Convert value based on determined column type
+                if column_types.get(formatted_title) == 'numeric':
+                    try:
+                        row[title] = float(value) if value is not None else None
+                    except (ValueError, TypeError):
+                        row[title] = None
+                else:
+                    row[title] = str(value) if value is not None else None
+            
             df_data.append(row)
         
         if df_data:
             st.markdown("### Results")
             st.markdown(f"Processing time: {time.time() - start_time:.2f} seconds")
-            st.dataframe(pd.DataFrame(df_data))
             
-            # Download results
-            csv = pd.DataFrame(df_data).to_csv(index=False)
+            # Create DataFrame with explicit dtypes
+            df = pd.DataFrame(df_data)
+            
+            # Convert columns to appropriate types
+            for col in df.columns:
+                if col != "File Name" and col in [instr["title"] for instr in st.session_state.instructions]:
+                    if column_types.get(col.lower().replace(" ", "_")) == 'numeric':
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Display the DataFrame
+            st.dataframe(df)
+            
+            # Download options
+            csv = df.to_csv(index=False)
             st.download_button(
                 "Download Results as CSV",
                 csv,
-                file_name="analysis_results.csv"
+                file_name=f"batch_analysis_{batch_analysis.id}_results.csv"
             )
+            
+            # Display summary statistics for numeric columns
+            numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
+            if len(numeric_cols) > 0:
+                st.markdown("### Summary Statistics")
+                st.dataframe(df[numeric_cols].describe())
+            
+            # Option to download raw analysis data
+            if st.button("Download Raw Analysis Data"):
+                raw_data = {
+                    'batch_id': batch_analysis.id,
+                    'instructions': st.session_state.instructions,
+                    'analyses': analyses_data,
+                    'summary': {
+                        'processing_time': time.time() - start_time,
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                }
+                st.download_button(
+                    "Download Raw JSON",
+                    data=json.dumps(raw_data, default=str),
+                    file_name=f"batch_analysis_{batch_analysis.id}_raw.json"
+                )
+    except Exception as e:
+        st.error(f"An error occurred during analysis: {str(e)}")
+        st.exception(e)
     finally:
         session.close()
+
+
+def render_batch_analysis(analysis):
+    """Helper function to render a batch analysis in the history page"""
+    st.markdown(f"#### Batch Analysis {analysis.id}")
+    st.markdown(f"Created: {analysis.created_at.strftime('%Y-%m-%d %H:%M')}")
+    
+    if analysis.results:
+        batch_results = analysis.results.get('batch_results', [])
+        summary = analysis.results.get('summary', {})
+        
+        st.markdown("##### Summary")
+        st.markdown(f"- Total files: {summary.get('total_files', len(batch_results))}")
+        
+        with st.expander("View Results"):
+            # Create DataFrame from batch results
+            df_data = []
+            for result in batch_results:
+                row = {"File Name": result["file_name"]}
+                row.update(result["results"])
+                df_data.append(row)
+            
+            if df_data:
+                st.dataframe(pd.DataFrame(df_data))
+                
+                # Download options
+                csv = pd.DataFrame(df_data).to_csv(index=False)
+                st.download_button(
+                    "Download Results as CSV",
+                    csv,
+                    file_name=f"batch_analysis_{analysis.id}_results.csv"
+                )
+
+
 
 @login_required
 def history_page():
@@ -330,6 +458,22 @@ def history_page():
     st.title("History")
     
     session = db_session()
+    
+    """Add batch analysis section to history page"""
+    st.header("Batch Analyses")
+    
+    # Get batch analyses (where extraction_id is None)
+    batch_analyses = session.query(Analysis).filter_by(
+        user_id=st.session_state.user_id,
+        extraction_id=None
+    ).order_by(desc(Analysis.created_at)).all()
+    
+    if batch_analyses:
+        for analysis in batch_analyses:
+            render_batch_analysis(analysis)
+    else:
+        st.info("No batch analyses found")
+    
     try:
         history = get_user_history(session, st.session_state.user_id)
         
