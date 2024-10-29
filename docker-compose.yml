@@ -11,6 +11,42 @@ services:
       - ./data/ollama:/root/.ollama
     environment:
       - OLLAMA_MODEL=llama3.2
+      - DATABASE_URL=postgresql://fileprocessor:fileprocessor@db:5432/fileprocessor
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=file-processor
+      - KEYCLOAK_CLIENT_ID=file-processor-client
+      - KEYCLOAK_CLIENT_SECRET=your-client-secret
+    depends_on:
+      - db
+      - keycloak
+
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: fileprocessor
+      POSTGRES_PASSWORD: fileprocessor
+      POSTGRES_DB: fileprocessor
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_DB_USERNAME: fileprocessor
+      KC_DB_PASSWORD: fileprocessor
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    command:
+      - start-dev
 
 volumes:
+  postgres-data:
   ollama-data:

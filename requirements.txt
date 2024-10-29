@@ -1,15 +1,50 @@
+# streamlit
+# ollama
+# pymupdf
+# pymupdf4llm
+# pandas
+# Pillow
+# python-docx
+# torch
+# torchvision
+# torchaudio
+# python-doctr[torch]
+# tabulate
+# setuptools
+# watchdog
+# orjson
+# python-keycloak
+# SQLAlchemy
+# psycopg2-binary
+# python-jose
+# requests
+
+# Web Framework
 streamlit
-ollama
-pymupdf
+
+# Database
+sqlalchemy
+psycopg2-binary
+
+# Authentication
+python-jose
+python-keycloak
+PyJWT
+requests
+python-dotenv
+
+# File Processing
+python-docx
+PyMuPDF
 pymupdf4llm
 pandas
-Pillow
-python-docx
-torch
-torchvision
-torchaudio
+openpyxl
 python-doctr[torch]
+torch
+antiword
+orjson
 tabulate
 setuptools
-watchdog
-orjson
+
+# LLM
+ollama
