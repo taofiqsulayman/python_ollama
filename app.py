@@ -86,21 +86,28 @@ def save_extraction(session: Session, user_id: str, file_name: str, content: str
 
 def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict[str, Any]], instructions: List[Dict[str, Any]]) -> Analysis:
     """Save a batch of analysis results together"""
+    
+    # Create new batch analysis
     batch_analysis = Analysis(
         user_id=user_id,
-        extraction_id=None,  # This will now be a list in the results
         instructions=instructions,
         results={
             'batch_results': analyses_data,
             'summary': {
                 'total_files': len(analyses_data),
                 'timestamp': datetime.utcnow().isoformat(),
-                'extraction_ids': [data['extraction_id'] for data in analyses_data]
             }
         },
         status="completed",
+        analysis_type="batch",
         created_at=datetime.utcnow()
     )
+    
+    # Add all related extractions
+    extraction_ids = [data['extraction_id'] for data in analyses_data]
+    extractions = session.query(Extraction).filter(Extraction.id.in_(extraction_ids)).all()
+    batch_analysis.extractions.extend(extractions)
+    
     session.add(batch_analysis)
     session.commit()
     return batch_analysis
@@ -454,234 +461,123 @@ def render_batch_analysis(analysis):
                 )
 
 
-
 @login_required
 def history_page():
     """Render history page showing all user activities"""
     st.title("Activity History")
-    
     session = db_session()
-    try:
-        # Fetch all extractions with their analyses
-        extractions = session.query(Extraction)\
-            .filter_by(user_id=st.session_state.user_id)\
-            .order_by(Extraction.created_at.desc())\
-            .all()
-
-        # Add filtering options in sidebar
-        with st.sidebar:
-            st.markdown("### Filter Options")
-            
-            # Date range filter
-            start_date = st.date_input(
-                "Start Date",
-                value=datetime.now().date() - timedelta(days=30),
-                key="history_start_date"
-            )
-            end_date = st.date_input(
-                "End Date",
-                value=datetime.now().date(),
-                key="history_end_date"
-            )
-            
-            # File name search
-            file_search = st.text_input("Search by filename", key="file_search")
-            
-            # Processing status filter
-            status_filter = st.multiselect(
-                "Processing Status",
-                options=["completed", "pending", "failed"],
-                default=["completed"],
-                key="status_filter"
-            )
-
-        # Apply filters
-        filtered_extractions = [
-            ext for ext in extractions
-            if (start_date <= ext.created_at.date() <= end_date and
-                (not file_search or file_search.lower() in ext.file_name.lower()) and
-                (not status_filter or ext.processing_status in status_filter))
-        ]
-
-        # Display summary metrics
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Files Processed", len(filtered_extractions))
-        with col2:
-            total_analyses = sum(1 for ext in filtered_extractions 
-                               for _ in session.query(Analysis)
-                               .filter_by(extraction_id=ext.id).all())
-            st.metric("Total Analyses", total_analyses)
-        with col3:
-            latest_activity = max([ext.created_at for ext in filtered_extractions], 
-                                default=None) if filtered_extractions else None
-            st.metric("Latest Activity", 
-                     latest_activity.strftime('%Y-%m-%d') if latest_activity else "No activity")
-
-        # Main content area
-        st.markdown("## File Processing History")
+    
+    extractions = session.query(Extraction)\
+                .filter_by(user_id=st.session_state.user_id)\
+                .order_by(Extraction.created_at.desc())\
+                .all()
+    
+    analyses = session.query(Analysis)\
+                .filter_by(user_id=st.session_state.user_id)\
+                .order_by(Analysis.created_at.desc())\
+                .all()
+    
+    if not extractions and not analyses:
+        st.warning("No activity found.")
+        return
+    
+     # Display summary metrics
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Total Extractions", len(extractions))
+    with col2:
+        st.metric("Total Analyses", len(analyses))
+    with col3:
+        st.metric("Last Activity", extractions[0].created_at.strftime('%Y-%m-%d %H:%M:%S'))
+    
+    tab1, tab2 = st.tabs(["Extractions", "Analyses"])
         
-        if not filtered_extractions:
-            st.info("No activities found matching the selected filters.")
-            return
-
-        for extraction in filtered_extractions:
-            with st.expander(f"📄 {extraction.file_name} - {extraction.created_at.strftime('%Y-%m-%d %H:%M')}"):
-                # File details section
-                st.markdown("### File Details")
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
+    try:
+        with tab1:
+            st.header("File Extractions")
+            extractions = session.query(Extraction)\
+                .filter_by(user_id=st.session_state.user_id)\
+                .order_by(Extraction.created_at.desc())\
+                .all()
+            
+            for extraction in extractions:
+                with st.expander(f"📄 {extraction.file_name} - {extraction.created_at.strftime('%Y-%m-%d %H:%M')}"):
                     st.markdown(f"**Status:** {extraction.processing_status}")
                     st.markdown(f"**Created:** {extraction.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-                    if extraction.file_hash:
-                        st.markdown(f"**File Hash:** `{extraction.file_hash}`")
-                
-                with col2:
+                    
                     if extraction.content:
                         st.download_button(
                             "Download Extracted Text",
                             extraction.content,
                             file_name=f"{extraction.file_name}_content.txt",
                             mime="text/plain",
-                            key=f"download_{extraction.id}" 
+                            key=extraction.id
                         )
-
-                # Content preview
-                if extraction.content:
-                    with st.expander("Content Preview"):
-                        preview_length = 500
-                        content_preview = extraction.content[:preview_length]
-                        if len(extraction.content) > preview_length:
-                            content_preview += "..."
-                        st.markdown(content_preview)
-
-                # Related analyses section
-                analyses = session.query(Analysis)\
-                    .filter_by(extraction_id=extraction.id)\
-                    .order_by(Analysis.created_at.desc())\
-                    .all()
-
-                if analyses:
-                    st.markdown("### Analysis Results")
-                    for idx, analysis in enumerate(analyses, 1):
-                        with st.expander(f"Analysis #{idx} - {analysis.created_at.strftime('%Y-%m-%d %H:%M')}"):
-                            # Display instructions
-                            st.markdown("#### Instructions Used")
+                    
+                    # Show preview of content
+                    if extraction.content:
+                        with st.expander("Content Preview"):
+                            preview_length = 500
+                            content_preview = extraction.content[:preview_length]
+                            if len(extraction.content) > preview_length:
+                                content_preview += "..."
+                            st.markdown(content_preview)
+        
+        with tab2:
+            st.header("Analyses")
+            analyses = session.query(Analysis)\
+                .filter_by(user_id=st.session_state.user_id)\
+                .order_by(Analysis.created_at.desc())\
+                .all()
+            
+            for analysis in analyses:
+                with st.expander(f"🔍 Analysis {analysis.id} - {analysis.created_at.strftime('%Y-%m-%d %H:%M')}"):
+                    st.markdown(f"**Type:** {analysis.analysis_type}")
+                    st.markdown(f"**Status:** {analysis.status}")
+                    st.markdown(f"**Created:** {analysis.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+                    
+                    # Show related files
+                    if analysis.extractions:
+                        st.markdown("**Related Files:**")
+                        for extraction in analysis.extractions:
+                            st.markdown(f"- {extraction.file_name}")
+                    
+                    # Show instructions
+                    if analysis.instructions:
+                        with st.expander("Instructions Used"):
                             for instruction in analysis.instructions:
                                 st.markdown(f"""
                                     - **{instruction['title']}**
                                     - Type: {instruction.get('data_type', 'N/A')}
                                     - Description: {instruction.get('description', 'N/A')}
                                 """)
-
-                            # Display results
-                            st.markdown("#### Results")
-                            if analysis.results:
-                                # Convert results to DataFrame for better display
-                                try:
-                                    if isinstance(analysis.results, dict):
-                                        # Handle both single results and batch results
-                                        if 'batch_results' in analysis.results:
-                                            results_df = pd.DataFrame(analysis.results['batch_results'])
-                                        else:
-                                            results_df = pd.DataFrame([analysis.results])
-                                        
-                                        st.dataframe(results_df)
-                                        
-                                        # Add download buttons
-                                        col1, col2 = st.columns(2)
-                                        with col1:
-                                            st.download_button(
-                                                "Download as CSV",
-                                                results_df.to_csv(index=False),
-                                                file_name=f"analysis_{analysis.id}_results.csv",
-                                                mime="text/csv"
-                                            )
-                                        with col2:
-                                            st.download_button(
-                                                "Download as JSON",
-                                                json.dumps(analysis.results, indent=2),
-                                                file_name=f"analysis_{analysis.id}_results.json",
-                                                mime="application/json"
-                                            )
-                                except Exception as e:
-                                    st.error(f"Error displaying results: {str(e)}")
-                                    st.json(analysis.results)
+                    
+                    # Show results
+                    if analysis.results:
+                        with st.expander("Results"):
+                            if analysis.analysis_type == "batch":
+                                batch_results = analysis.results.get('batch_results', [])
+                                df = pd.DataFrame([{
+                                    'File': result['file_name'],
+                                    **result['results']
+                                } for result in batch_results])
+                                st.dataframe(df)
                             else:
-                                st.info("No results available for this analysis")
-
-                            st.markdown(f"**Status:** {analysis.status}")
-                            st.markdown(f"**Completed:** {analysis.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-                else:
-                    st.info("No analyses have been performed on this file")
-
-        # Export options
-        st.markdown("---")
-        st.markdown("## Export Options")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("Export All Results"):
-                # Prepare export data
-                export_data = {
-                    'user_id': st.session_state.user_id,
-                    'export_date': datetime.now().isoformat(),
-                    'extractions': [
-                        {
-                            'file_name': ext.file_name,
-                            'created_at': ext.created_at.isoformat(),
-                            'status': ext.processing_status,
-                            'analyses': [
-                                {
-                                    'id': analysis.id,
-                                    'created_at': analysis.created_at.isoformat(),
-                                    'instructions': analysis.instructions,
-                                    'results': analysis.results,
-                                    'status': analysis.status
-                                }
-                                for analysis in session.query(Analysis)
-                                .filter_by(extraction_id=ext.id).all()
-                            ]
-                        }
-                        for ext in filtered_extractions
-                    ]
-                }
-                
-                st.download_button(
-                    "Download Complete History",
-                    json.dumps(export_data, indent=2),
-                    file_name=f"activity_history_{datetime.now().strftime('%Y%m%d')}.json",
-                    mime="application/json"
-                )
-        
-        with col2:
-            if st.button("Generate Summary Report"):
-                # Create summary report
-                summary_data = {
-                    'total_files': len(filtered_extractions),
-                    'total_analyses': total_analyses,
-                    'date_range': f"{start_date} to {end_date}",
-                    'file_types': dict(Counter(
-                        Path(ext.file_name).suffix for ext in filtered_extractions
-                    )),
-                    'activity_by_date': dict(Counter(
-                        ext.created_at.date().isoformat() for ext in filtered_extractions
-                    ))
-                }
-                
-                st.download_button(
-                    "Download Summary Report",
-                    json.dumps(summary_data, indent=2),
-                    file_name=f"summary_report_{datetime.now().strftime('%Y%m%d')}.json",
-                    mime="application/json"
-                )
+                                st.json(analysis.results)
+                            
+                            # Download options
+                            st.download_button(
+                                "Download Results as JSON",
+                                json.dumps(analysis.results, indent=2),
+                                file_name=f"analysis_{analysis.id}_results.json",
+                                mime="application/json",
+                                key=f"download_btn_{analysis.id}"
+                            )
     
-    except Exception as e:
-        st.error(f"An error occurred while loading history: {str(e)}")
-        st.exception(e)
     finally:
         session.close()
+
 
 # Main app routing
 def main():
