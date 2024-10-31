@@ -137,7 +137,7 @@ def render_sidebar():
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 init_session_state()
-                st.experimental_rerun()
+                st.re
         
         st.markdown("---")
         st.markdown("### Navigation")
@@ -172,7 +172,7 @@ def login_page():
                         "user_role": user_info.get('role', 'basic'),
                         "stage": "upload"
                     })
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Invalid token")
             else:

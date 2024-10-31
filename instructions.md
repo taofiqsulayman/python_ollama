@@ -33,7 +33,7 @@ pip install -r requirements.txt
 docker run --name fileprocessor-db \
   -e POSTGRES_DB=fileprocessor \
   -e POSTGRES_USER=fileprocessor \
-  -e POSTGRES_PASSWORD=yourpassword \
+  -e POSTGRES_PASSWORD=root \
   -p 5432:5432 \
   -d postgres:14
 ```
@@ -92,12 +92,15 @@ streamlit run app.py
   - Admin user: admin/admin123
   - Basic user: user/user123
 
-
-# Keycloak Setup Guide
-
 1. Run Keycloak in Docker:
 ```bash
 docker run -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:latest start-dev
+```
+
+Mount keycloak with volume
+``` bash
+mkdir -m 777 ./keycloak_data
+docker run -p 8080:8080 -v ./keycloak_data:/opt/keycloak/data/h2 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:24.0.4 start-dev
 ```
 
 2. Access Keycloak Admin Console:
@@ -127,4 +130,10 @@ docker run -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin
 - Go to Users → Add user
 - Create test users and assign roles
 
-8. Update your .env file with the Keycloak settings
+8. Create Audience Mapper:
+- Go to Clients -> file-processor-client -> Client scopes (tab) -> file-processor-client-dedicated
+- Create a new mapper called ``Audience Mapper``
+- In the Included Client Audience field, add file-processor-client (your client ID)
+- Turn on the Add to access token (toggle) button
+
+9. Update your .env file with the Keycloak settings

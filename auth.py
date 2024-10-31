@@ -6,6 +6,10 @@ import requests
 from urllib.parse import urljoin
 import streamlit as st
 from models import User
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+from jwt import PyJWKClient
 
 class KeycloakAuth:
     def __init__(self):
@@ -36,11 +40,17 @@ class KeycloakAuth:
         try:
             public_key_url = f"{self.realm_url}/protocol/openid-connect/certs"
             key_response = requests.get(public_key_url)
-            public_key = key_response.json()['keys'][0]
+        
+            jwk_client = PyJWKClient(public_key_url)
+
+            token_payload = jwt.decode(token, options={"verify_signature": False})
             
+ 
+            signing_key = jwk_client.get_signing_key_from_jwt(token).key
+
             decoded_token = jwt.decode(
                 token,
-                public_key,
+                signing_key,
                 algorithms=['RS256'],
                 audience=self.client_id
             )
