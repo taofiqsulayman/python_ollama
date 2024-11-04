@@ -12,7 +12,7 @@ import json
 from config import init_config, get_database_url
 
 from auth import KeycloakAuth, login_required, role_required
-from models import init_db, User, Extraction, Analysis
+from models import init_db, User, Extraction, Analysis, ProcessingSession
 from utils import process_files
 from ollama_setup import run_inference_on_document
 import time
@@ -85,10 +85,9 @@ def save_extraction(session: Session, user_id: str, file_name: str, content: str
     return extraction
 
 def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict[str, Any]], instructions: List[Dict[str, Any]]) -> Analysis:
-    """Save a batch of analysis results together"""
-    
-    # Create new batch analysis
+    """Save a batch of analysis results together with session handling"""
     batch_analysis = Analysis(
+        session_id=st.session_state.current_session_id,
         user_id=user_id,
         instructions=instructions,
         results={
@@ -99,11 +98,9 @@ def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict
             }
         },
         status="completed",
-        analysis_type="batch",
-        created_at=datetime.utcnow()
+        analysis_type="batch"
     )
     
-    # Add all related extractions
     extraction_ids = [data['extraction_id'] for data in analyses_data]
     extractions = session.query(Extraction).filter(Extraction.id.in_(extraction_ids)).all()
     batch_analysis.extractions.extend(extractions)
@@ -112,6 +109,9 @@ def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict
     session.commit()
     return batch_analysis
 
+def generate_session_name() -> str:
+    """Generate a unique session name based on timestamp"""
+    return f"Session_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
 
 def get_user_history(session: Session, user_id: str) -> Dict[str, List]:
     """Fetch user's extraction and analysis history"""
@@ -180,8 +180,23 @@ def login_page():
 
 @login_required
 def upload_page():
-    """Render file upload page"""
+    """Render file upload page with session handling"""
     st.title("Upload Files")
+    
+    # Create or get current session
+    if "current_session_id" not in st.session_state:
+        session = db_session()
+        try:
+            new_processing_session = ProcessingSession(
+                user_id=st.session_state.user_id,
+                session_name=generate_session_name(),
+                status='active'
+            )
+            session.add(new_processing_session)
+            session.commit()
+            st.session_state.current_session_id = new_processing_session.id
+        finally:
+            session.close()
     
     uploaded_files = st.file_uploader(
         "Upload supported files",
@@ -200,29 +215,21 @@ def upload_page():
                 
                 session = db_session()
                 try:
-                    # Get the user's role from session state or provide a default
-                    user_role = st.session_state.get('user_role', 'basic')
-                    
-                    # Ensure the user exists in the database
-                    user = get_or_create_user(
-                        session,
-                        st.session_state.user_id,
-                        st.session_state.username,
-                        user_role
-                    )
-
                     for uploaded_file in uploaded_files:
                         input_file = input_dir / uploaded_file.name
                         with open(input_file, "wb") as f:
                             f.write(uploaded_file.getbuffer())
                         
                         extracted_text = process_files(input_file)
-                        extraction = save_extraction(
-                            session,
-                            st.session_state.user_id,
-                            uploaded_file.name,
-                            extracted_text
+                        extraction = Extraction(
+                            session_id=st.session_state.current_session_id,
+                            user_id=st.session_state.user_id,
+                            file_name=uploaded_file.name,
+                            content=extracted_text,
+                            processing_status="completed"
                         )
+                        session.add(extraction)
+                        session.commit()
                         
                         extracted_files.append({
                             "file_name": uploaded_file.name,
@@ -463,117 +470,139 @@ def render_batch_analysis(analysis):
 
 @login_required
 def history_page():
-    """Render history page showing all user activities"""
-    st.title("Activity History")
+    """Render history page organized by processing sessions"""
+    st.title("Processing History")
+    
     session = db_session()
-    
-    extractions = session.query(Extraction)\
-                .filter_by(user_id=st.session_state.user_id)\
-                .order_by(Extraction.created_at.desc())\
-                .all()
-    
-    analyses = session.query(Analysis)\
-                .filter_by(user_id=st.session_state.user_id)\
-                .order_by(Analysis.created_at.desc())\
-                .all()
-    
-    if not extractions and not analyses:
-        st.warning("No activity found.")
-        return
-    
-     # Display summary metrics
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Total Extractions", len(extractions))
-    with col2:
-        st.metric("Total Analyses", len(analyses))
-    with col3:
-        st.metric("Last Activity", extractions[0].created_at.strftime('%Y-%m-%d %H:%M:%S'))
-    
-    tab1, tab2 = st.tabs(["Extractions", "Analyses"])
-        
     try:
-        with tab1:
-            st.header("File Extractions")
-            extractions = session.query(Extraction)\
-                .filter_by(user_id=st.session_state.user_id)\
-                .order_by(Extraction.created_at.desc())\
-                .all()
-            
-            for extraction in extractions:
-                with st.expander(f"📄 {extraction.file_name} - {extraction.created_at.strftime('%Y-%m-%d %H:%M')}"):
-                    st.markdown(f"**Status:** {extraction.processing_status}")
-                    st.markdown(f"**Created:** {extraction.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-                    
-                    if extraction.content:
-                        st.download_button(
-                            "Download Extracted Text",
-                            extraction.content,
-                            file_name=f"{extraction.file_name}_content.txt",
-                            mime="text/plain",
-                            key=extraction.id
-                        )
-                    
-                    # Show preview of content
-                    if extraction.content:
-                        with st.expander("Content Preview"):
-                            preview_length = 500
-                            content_preview = extraction.content[:preview_length]
-                            if len(extraction.content) > preview_length:
-                                content_preview += "..."
-                            st.markdown(content_preview)
+        processing_sessions = (
+            session.query(ProcessingSession)
+            .filter_by(user_id=st.session_state.user_id)
+            .order_by(ProcessingSession.created_at.desc())
+            .all()
+        )
         
-        with tab2:
-            st.header("Analyses")
-            analyses = session.query(Analysis)\
-                .filter_by(user_id=st.session_state.user_id)\
-                .order_by(Analysis.created_at.desc())\
-                .all()
-            
-            for analysis in analyses:
-                with st.expander(f"🔍 Analysis {analysis.id} - {analysis.created_at.strftime('%Y-%m-%d %H:%M')}"):
-                    st.markdown(f"**Type:** {analysis.analysis_type}")
-                    st.markdown(f"**Status:** {analysis.status}")
-                    st.markdown(f"**Created:** {analysis.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-                    
-                    # Show related files
-                    if analysis.extractions:
-                        st.markdown("**Related Files:**")
-                        for extraction in analysis.extractions:
-                            st.markdown(f"- {extraction.file_name}")
-                    
-                    # Show instructions
-                    if analysis.instructions:
-                        with st.expander("Instructions Used"):
-                            for instruction in analysis.instructions:
-                                st.markdown(f"""
-                                    - **{instruction['title']}**
-                                    - Type: {instruction.get('data_type', 'N/A')}
-                                    - Description: {instruction.get('description', 'N/A')}
-                                """)
-                    
-                    # Show results
-                    if analysis.results:
-                        with st.expander("Results"):
-                            if analysis.analysis_type == "batch":
-                                batch_results = analysis.results.get('batch_results', [])
-                                df = pd.DataFrame([{
-                                    'File': result['file_name'],
-                                    **result['results']
-                                } for result in batch_results])
-                                st.dataframe(df)
-                            else:
-                                st.json(analysis.results)
+        if not processing_sessions:
+            st.info("No processing sessions found.")
+            return
+        
+        # Overall statistics
+        st.markdown("## Overview")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Sessions", len(processing_sessions))
+        with col2:
+            total_files = sum(len(ps.extractions) for ps in processing_sessions)
+            st.metric("Total Files Processed", total_files)
+        with col3:
+            total_analyses = sum(len(ps.analyses) for ps in processing_sessions)
+            st.metric("Total Analyses", total_analyses)
+        
+        st.markdown("## Processing Sessions")
+        
+        # Session filters
+        with st.expander("Filter Options"):
+            start_date = st.date_input(
+                "Start Date",
+                value=(datetime.now() - timedelta(days=30)).date()
+            )
+            end_date = st.date_input("End Date", value=datetime.now().date())
+            status_filter = st.multiselect(
+                "Status",
+                options=["active", "completed"],
+                default=["active", "completed"]
+            )
+        
+        # Filter sessions
+        filtered_sessions = [
+            ps for ps in processing_sessions
+            if (start_date <= ps.created_at.date() <= end_date and
+                ps.status in status_filter)
+        ]
+        
+        # Display sessions
+        for proc_session in filtered_sessions:
+            with st.expander(
+                f"📁 {proc_session.session_name} - Created: {proc_session.created_at.strftime('%Y-%m-%d %H:%M')}",
+                expanded=(proc_session.id == st.session_state.get('current_session_id', None))
+            ):
+                # Session info
+                st.markdown(f"""
+                    **Status:** {proc_session.status}  
+                    **Created:** {proc_session.created_at.strftime('%Y-%m-%d %H:%M:%S')}  
+                    **Last Active:** {proc_session.last_active.strftime('%Y-%m-%d %H:%M:%S')}
+                """)
+                
+                # Files section
+                if proc_session.extractions:
+                    st.markdown("### Files")
+                    for extraction in proc_session.extractions:
+                        with st.expander(f"📄 {extraction.file_name}"):
+                            st.markdown(f"**Status:** {extraction.processing_status}")
                             
-                            # Download options
-                            st.download_button(
-                                "Download Results as JSON",
-                                json.dumps(analysis.results, indent=2),
-                                file_name=f"analysis_{analysis.id}_results.json",
-                                mime="application/json",
-                                key=f"download_btn_{analysis.id}"
-                            )
+                            if extraction.content:
+                                st.download_button(
+                                    "Download Content",
+                                    extraction.content,
+                                    file_name=f"{extraction.file_name}_content.txt",
+                                    mime="text/plain",
+                                    key=extraction.id
+                                )
+                                
+                                with st.expander("Content Preview"):
+                                    preview_length = 300
+                                    preview = extraction.content[:preview_length]
+                                    if len(extraction.content) > preview_length:
+                                        preview += "..."
+                                    st.markdown(preview)
+                
+                # Analysis section
+                if proc_session.analyses:
+                    st.markdown("### Analyses")
+                    for analysis in proc_session.analyses:
+                        with st.expander(f"🔍 Analysis {analysis.id}"):
+                            # Instructions
+                            if analysis.instructions:
+                                st.markdown("#### Instructions")
+                                for instr in analysis.instructions:
+                                    st.markdown(f"""
+                                        - **{instr['title']}**
+                                        - Type: {instr.get('data_type', 'N/A')}
+                                        - Description: {instr.get('description', 'N/A')}
+                                    """)
+                            
+                            # Results
+                            if analysis.results:
+                                st.markdown("#### Results")
+                                if analysis.analysis_type == "batch":
+                                    results_df = pd.DataFrame([
+                                        {'File': res['file_name'], **res['results']}
+                                        for res in analysis.results['batch_results']
+                                    ])
+                                    st.dataframe(results_df)
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.download_button(
+                                            "Download CSV",
+                                            results_df.to_csv(index=False),
+                                            file_name=f"analysis_{analysis.id}_results.csv",
+                                            key=f"csv_{analysis.id}"
+                                        )
+                                    with col2:
+                                        st.download_button(
+                                            "Download JSON",
+                                            json.dumps(analysis.results, indent=2),
+                                            file_name=f"analysis_{analysis.id}_results.json",
+                                            key=f"json_{analysis.id}"
+                                        )
+                
+                # Session actions
+                if proc_session.status == "active":
+                    if st.button("Complete Session", key=f"complete_{proc_session.id}"):
+                        proc_session.status = "completed"
+                        session.commit()
+                        st.experimental_rerun()
     
     finally:
         session.close()
