@@ -33,6 +33,7 @@ if os.getenv("DEV") == "True":
 else:
     from auth import KeycloakAuth
     keycloak_auth = KeycloakAuth()
+    
 
 # Page config
 st.set_page_config(
@@ -137,18 +138,18 @@ def render_sidebar():
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 init_session_state()
-                st.re
+                st.rerun()
         
         st.markdown("---")
         st.markdown("### Navigation")
         stages = ["upload", "show_text", "history"]
-        if st.session_state.get("user_role") == "advanced":
+        if st.session_state.get("user_role") == "admin":
             stages.extend(["add_instructions", "analyze"])
         
         for stage in stages:
             if st.button(stage.replace("_", " ").title(), key=f"nav_{stage}"):
                 st.session_state.stage = stage
-                st.experimental_rerun()
+                st.rerun()
 
 def login_page():
     """Render login page"""
@@ -163,13 +164,16 @@ def login_page():
             if token_response:
                 token = token_response['access_token']
                 user_info = keycloak_auth.verify_token(token)
+                role = user_info.get('resource_access', {}).get('file-processor-client', {}).get('roles', [None])[0]
+                print(user_info, " --------------------------------")
+
                 
                 if user_info:
                     st.session_state.update({
                         "token": token,
                         "user_id": user_info['sub'],
                         "username": user_info['preferred_username'],
-                        "user_role": user_info.get('role', 'basic'),
+                        "user_role": role,
                         "stage": "upload"
                     })
                     st.rerun()
@@ -234,7 +238,7 @@ def upload_page():
         
         st.session_state.extracted_files = extracted_files
         st.session_state.stage = "show_text"
-        st.experimental_rerun()
+        st.rerun()
 
 @login_required
 def show_text_page():
@@ -250,13 +254,13 @@ def show_text_page():
                 file_name=f"{Path(file_data['file_name']).stem}_extracted.md"
             )
     
-    if st.session_state.user_role == "advanced":
+    if st.session_state.user_role == "admin":
         if st.button("Proceed to Analysis", key="to_analysis_btn"):
             st.session_state.stage = "add_instructions"
-            st.experimental_rerun()
+            st.rerun()
 
 @login_required
-@role_required("advanced")
+@role_required("admin")
 def add_instructions_page():
     """Render instructions page"""
     st.title("Analysis Instructions")
@@ -283,10 +287,10 @@ def add_instructions_page():
         
         if st.button("Run Analysis", key="run_analysis_btn"):
             st.session_state.stage = "analyze"
-            st.experimental_rerun()
+            st.rerun()
 
 @login_required
-@role_required("advanced")
+@role_required("admin")
 def analyze_page():
     """Render analysis page with normalized data handling"""
     st.title("Analysis Results")

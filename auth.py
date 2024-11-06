@@ -67,7 +67,6 @@ def login_required(func):
             st.stop()
         return func(*args, **kwargs)
     return wrapper
-
 def role_required(required_role):
     def decorator(func):
         @wraps(func)
