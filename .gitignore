@@ -4,3 +4,4 @@ venv/*
 .ollama
 .ollama/*
 __pycache__
+.env

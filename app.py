@@ -19,10 +19,9 @@ import time
 
 from collections import Counter
 import streamlit_nested_layout
+import webbrowser
+import requests
 
-# Initialize services
-# db_session = init_db(os.getenv('DATABASE_URL'))
-# keycloak_auth = KeycloakAuth()
 
 config = init_config()
 db_session = init_db(get_database_url())
@@ -133,12 +132,8 @@ def render_sidebar():
         if st.session_state.get("username"):
             st.markdown(f"### Welcome, {st.session_state.username}")
             st.markdown(f"Role: {st.session_state.user_role}")
+            st.link_button("Logout", "http://localhost:8080/realms/fileprocessor/protocol/openid-connect/logout")
             
-            if st.button("Logout", key="logout_btn"):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                init_session_state()
-                st.rerun()
         
         st.markdown("---")
         st.markdown("### Navigation")
@@ -151,36 +146,73 @@ def render_sidebar():
                 st.session_state.stage = stage
                 st.rerun()
 
-def login_page():
-    """Render login page"""
-    st.title("Login")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-        
-        if submitted and username and password:
-            token_response = keycloak_auth.get_token(username, password)
-            if token_response:
-                token = token_response['access_token']
-                user_info = keycloak_auth.verify_token(token)
-                role = user_info.get('resource_access', {}).get('file-processor-client', {}).get('roles', [None])[0]
-                print(user_info, " --------------------------------")
 
-                
-                if user_info:
-                    st.session_state.update({
-                        "token": token,
-                        "user_id": user_info['sub'],
-                        "username": user_info['preferred_username'],
-                        "user_role": role,
-                        "stage": "upload"
-                    })
-                    st.rerun()
+def login_page():
+  
+    if 'auth_code' not in st.session_state:
+        st.write("Click below to login:")
+        auth_url = keycloak_auth.get_authorization_url()
+        st.markdown(f"[Login with Keycloak]({auth_url})")
+
+    query_params = st.query_params
+    auth_code = query_params.get("code")
+    
+    if auth_code and 'auth_code' not in st.session_state:
+        st.session_state['auth_code'] = auth_code
+        
+        access_token, refresh_token = keycloak_auth.get_keycloak_token(auth_code)
+
+        if access_token:
+            st.success("Logged in successfully!")
+            st.session_state['access_token'] = access_token
+            st.session_state['refresh_token'] = refresh_token
+
+
+            if keycloak_auth.is_token_expired(st.session_state.get("access_token")):
+                try:
+                    token_response = keycloak_auth.refresh_access_token(st.session_state["refresh_token"])
+                    
+                    # Update the session with new tokens
+                    st.session_state["access_token"] = token_response.get("access_token")
+                    st.session_state["refresh_token"] = token_response.get("refresh_token")
+                    
+                    print("Token successfully refreshed!")
+                    
+                except Exception as e:
+                    print("Error refreshing token:", str(e))
+                    st.error("Session expired, please log in again.")
+
+
+            
+            user_info = keycloak_auth.get_user_info(access_token)
+            print("User info: =pp", user_info)
+
+                            
+            if user_info:
+                role = user_info.get('resource_access', {}).get('file-processor-client', {}).get('roles', [None])
+
+                if "admin" in role:
+                    user_role = "admin"
+                    print("Role has admin privileges")
                 else:
-                    st.error("Invalid token")
+                    user_role = "user"
+                    print("Role does not have admin privileges")
+                st.session_state.update({
+                    "user_id": user_info['sub'],
+                    "username": user_info['preferred_username'],
+                    "user_role": user_role,
+                    "stage": "upload"
+                })
+                st.rerun()
             else:
-                st.error("Invalid credentials")
+                st.error("Invalid token")
+        else:
+            st.error("Invalid credentials")
+
+
+    else:
+        st.error("Failed to authenticate.")
+
 
 @login_required
 def upload_page():
@@ -586,7 +618,6 @@ def history_page():
 # Main app routing
 def main():
     render_sidebar()
-    
     if st.session_state.stage == "login":
         login_page()
     elif st.session_state.stage == "upload":
