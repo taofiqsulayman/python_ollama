@@ -14,6 +14,21 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     processing_sessions = relationship("ProcessingSession", back_populates="user")
+    projects = relationship("Project", back_populates="user")
+
+class Project(Base):
+    __tablename__ = 'projects'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, ForeignKey('users.id'))
+    name = Column(String, nullable=False)
+    description = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User", back_populates="projects")
+    processing_sessions = relationship("ProcessingSession", back_populates="project")
+    extractions = relationship("Extraction", back_populates="project")
+    analyses = relationship("Analysis", back_populates="project")
 
 class ProcessingSession(Base):
     __tablename__ = 'processing_sessions'
@@ -24,10 +39,12 @@ class ProcessingSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     last_active = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     status = Column(String, default='active')  # active, completed
+    project_id = Column(Integer, ForeignKey('projects.id'))
     
     user = relationship("User", back_populates="processing_sessions")
     extractions = relationship("Extraction", back_populates="processing_session")
     analyses = relationship("Analysis", back_populates="processing_session")
+    project = relationship("Project", back_populates="processing_sessions")
 
 class Extraction(Base):
     __tablename__ = 'extractions'
@@ -40,9 +57,11 @@ class Extraction(Base):
     file_hash = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     processing_status = Column(String)
+    project_id = Column(Integer, ForeignKey('projects.id'))
     
     processing_session = relationship("ProcessingSession", back_populates="extractions")
     analyses = relationship("Analysis", secondary="analysis_extraction", back_populates="extractions")
+    project = relationship("Project", back_populates="extractions")
 
 class Analysis(Base):
     __tablename__ = 'analyses'
@@ -55,9 +74,11 @@ class Analysis(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String)
     analysis_type = Column(String)  # 'single' or 'batch'
+    project_id = Column(Integer, ForeignKey('projects.id'))
     
     processing_session = relationship("ProcessingSession", back_populates="analyses")
     extractions = relationship("Extraction", secondary="analysis_extraction", back_populates="analyses")
+    project = relationship("Project", back_populates="analyses")
 
 # Association table for many-to-many relationship between Analysis and Extraction
 analysis_extraction = Table(

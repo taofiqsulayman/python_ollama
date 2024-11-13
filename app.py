@@ -11,7 +11,7 @@ import json
 
 
 from auth import KeycloakAuth, login_required, role_required
-from models import init_db, User, Extraction, Analysis, ProcessingSession
+from models import init_db, User, Extraction, Analysis, ProcessingSession, Project
 from utils import process_files
 from ollama_setup import run_inference_on_document
 import time
@@ -52,7 +52,8 @@ def init_session_state():
             "user_id": None,
             "username": None,
             "user_role": None,
-            "token": None
+            "token": None,
+            "current_project_id": None
         })
 
 init_session_state()
@@ -121,6 +122,15 @@ def get_user_history(session: Session, user_id: str) -> Dict[str, List]:
         "analyses": analyses
     }
 
+def create_project(session: Session, user_id: str, name: str, description: str) -> Project:
+    project = Project(user_id=user_id, name=name, description=description)
+    session.add(project)
+    session.commit()
+    return project
+
+def get_user_projects(session: Session, user_id: str) -> List[Project]:
+    return session.query(Project).filter_by(user_id=user_id).all()
+
 # UI Components
 def render_sidebar():
     """Render sidebar with user info and logout button"""
@@ -139,7 +149,7 @@ def render_sidebar():
         
         st.markdown("---")
         st.markdown("### Navigation")
-        stages = ["upload", "show_text", "history"]
+        stages = ["project", "upload", "show_text", "history"]
         if st.session_state.get("user_role") == "advanced":
             stages.extend(["add_instructions", "analyze"])
         
@@ -168,7 +178,7 @@ def login_page():
                         "user_id": user_info['sub'],
                         "username": user_info['preferred_username'],
                         "user_role": user_info.get('role', 'basic'),
-                        "stage": "upload"
+                        "stage": "project"
                     })
                     st.experimental_rerun()
                 else:
@@ -177,9 +187,43 @@ def login_page():
                 st.error("Invalid credentials")
 
 @login_required
+def project_page():
+    """Render project creation and selection page"""
+    st.title("Projects")
+    
+    session = db_session()
+    try:
+        projects = get_user_projects(session, st.session_state.user_id)
+        
+        st.markdown("### Your Projects")
+        for project in projects:
+            if st.button(project.name, key=f"project_{project.id}"):
+                st.session_state.current_project_id = project.id
+                st.session_state.stage = "upload"
+                st.experimental_rerun()
+        
+        st.markdown("### Create New Project")
+        with st.form("create_project_form"):
+            name = st.text_input("Project Name")
+            description = st.text_area("Project Description")
+            submitted = st.form_submit_button("Create Project")
+            
+            if submitted and name:
+                new_project = create_project(session, st.session_state.user_id, name, description)
+                st.session_state.current_project_id = new_project.id
+                st.session_state.stage = "upload"
+                st.experimental_rerun()
+    finally:
+        session.close()
+
+@login_required
 def upload_page():
     """Render file upload page with session handling"""
     st.title("Upload Files")
+    
+    if "current_project_id" not in st.session_state:
+        st.session_state.stage = "project"
+        st.experimental_rerun()
     
     # Create or get current session
     if "current_session_id" not in st.session_state:
@@ -612,6 +656,8 @@ def main():
     
     if st.session_state.stage == "login":
         login_page()
+    elif st.session_state.stage == "project":
+        project_page()
     elif st.session_state.stage == "upload":
         upload_page()
     elif st.session_state.stage == "show_text":
