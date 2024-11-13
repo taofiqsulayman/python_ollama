@@ -1,18 +1,19 @@
 import ollama
 import orjson
+import logging
 
 def extract_json_from_response(response):
     
     json_like_str = response.get("response", "").strip()
 
     if not json_like_str.startswith("{") or not json_like_str.endswith("}"):
-        print(f"Warning: Response does not contain valid JSON format: {json_like_str}")
+        logging.warning(f"Response does not contain valid JSON format: {json_like_str}")
         return {}
 
     try:
         extracted_info = orjson.loads(json_like_str)
     except orjson.JSONDecodeError as e:
-        print(f"Error parsing JSON: {e}")
+        logging.error(f"Error parsing JSON: {e}")
         extracted_info = {}
 
     return extracted_info
@@ -49,5 +50,4 @@ def run_inference_on_document(data: str, instructions: list):
     refined_response = extract_json_from_response(response)
     return refined_response
 
-    
-    
+

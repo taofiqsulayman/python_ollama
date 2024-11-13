@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, ForeignKey, Table
+from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, ForeignKey, Table, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -14,6 +14,11 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     projects = relationship("Project", back_populates="user")
+    
+    __table_args__ = (
+        Index('idx_user_id', 'id'),
+        Index('idx_username', 'username'),
+    )
 
 class Project(Base):
     __tablename__ = 'projects'
@@ -67,6 +72,8 @@ analysis_extraction = Table(
 )
 
 def init_db(database_url: str):
+    if not database_url:
+        raise ValueError("Database URL must be provided")
     engine = create_engine(database_url)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)

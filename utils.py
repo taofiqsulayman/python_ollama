@@ -29,20 +29,21 @@ def extract_text_with_ocr(image_path):
 
 def process_pdf(file_path):
     extracted_text = ''
-    doc = fitz.open(file_path)
-    
-    for i in range(doc.page_count):
-        page = doc.load_page(i)
-        check_text = page.get_text("text")
-        if not check_text.strip():
-            pixmap = page.get_pixmap()
-            
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_img_file:
-                pixmap.save(temp_img_file.name)
-                extracted_text += extract_text_with_ocr(temp_img_file.name)
-                os.remove(temp_img_file.name)  
-        else:
-            extracted_text += pymupdf4llm.to_markdown(file_path, pages=[i])
+    try:
+        doc = fitz.open(file_path)
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            check_text = page.get_text("text")
+            if not check_text.strip():
+                pixmap = page.get_pixmap()
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_img_file:
+                    pixmap.save(temp_img_file.name)
+                    extracted_text += extract_text_with_ocr(temp_img_file.name)
+                    os.remove(temp_img_file.name)
+            else:
+                extracted_text += pymupdf4llm.to_markdown(file_path, pages=[i])
+    except Exception as e:
+        print(f"Error processing PDF: {e}")
     return extracted_text
 
 def convert_table_to_markdown(df):

@@ -11,6 +11,7 @@ from sqlalchemy import desc
 import json
 import zipfile
 from io import BytesIO
+import logging
 
 from auth import KeycloakAuth, login_required, role_required
 from models import init_db, User, Extraction, Analysis, Project
@@ -242,27 +243,29 @@ def login_page():
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Login")
-        
         if submitted and username and password:
-            token_response = keycloak_auth.get_token(username, password)
-            if token_response:
-                token = token_response['access_token']
-                user_info = keycloak_auth.verify_token(token)
-                
-                if user_info:
-                    reset_session_state()  # Reset session state on sign in
-                    st.session_state.update({
-                        "token": token,
-                        "user_id": user_info['sub'],
-                        "username": user_info['preferred_username'],
-                        "user_role": user_info.get('role', 'basic'),
-                        "stage": "projects"
-                    })
-                    st.experimental_rerun()
+            try:
+                token_response = keycloak_auth.get_token(username, password)
+                if token_response:
+                    token = token_response['access_token']
+                    user_info = keycloak_auth.verify_token(token)
+                    if user_info:
+                        reset_session_state()
+                        st.session_state.update({
+                            "token": token,
+                            "user_id": user_info['sub'],
+                            "username": user_info['preferred_username'],
+                            "user_role": user_info.get('role', 'basic'),
+                            "stage": "projects"
+                        })
+                        st.experimental_rerun()
+                    else:
+                        st.error("Invalid token")
                 else:
-                    st.error("Invalid token")
-            else:
-                st.error("Invalid credentials")
+                    st.error("Invalid credentials")
+            except Exception as e:
+                logging.error(f"Login error: {e}")
+                st.error("An error occurred during login")
 
 @login_required
 def project_page():
