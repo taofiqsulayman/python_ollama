@@ -56,6 +56,15 @@ def init_session_state():
             "current_project_id": None
         })
 
+def reset_session_state():
+    st.session_state.update({
+        "stage": "projects",
+        "extracted_files": [],
+        "instructions": [],
+        "uploaded_files": [],
+        "current_project_id": None
+    })
+
 init_session_state()
 
 # Database operations
@@ -127,6 +136,7 @@ def create_project(session: Session, user_id: str, name: str, description: str) 
     project = Project(user_id=user_id, name=name, description=description)
     session.add(project)
     session.commit()
+    reset_session_state()  # Reset session state on new project creation
     return project
 
 def get_user_projects(session: Session, user_id: str) -> List[Project]:
@@ -240,6 +250,7 @@ def login_page():
                 user_info = keycloak_auth.verify_token(token)
                 
                 if user_info:
+                    reset_session_state()  # Reset session state on sign in
                     st.session_state.update({
                         "token": token,
                         "user_id": user_info['sub'],
@@ -325,6 +336,23 @@ def project_page():
                     # Select project button
                     if st.button("Select Project", key=f"select_{project.id}"):
                         st.session_state.current_project_id = project.id
+                        st.session_state.extracted_files = [
+                            {
+                                "file_name": extraction.file_name,
+                                "content": extraction.content,
+                                "extraction_id": extraction.id
+                            }
+                            for extraction in project.extractions
+                        ]
+                        st.session_state.instructions = [
+                            {
+                                "title": instruction["title"],
+                                "data_type": instruction["data_type"],
+                                "description": instruction["description"]
+                            }
+                            for analysis in project.analyses
+                            for instruction in analysis.instructions
+                        ]
                         st.session_state.stage = "upload"
                         st.experimental_rerun()
                     
