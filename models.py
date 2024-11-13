@@ -13,7 +13,6 @@ class User(Base):
     role = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    processing_sessions = relationship("ProcessingSession", back_populates="user")
     projects = relationship("Project", back_populates="user")
 
 class Project(Base):
@@ -24,61 +23,41 @@ class Project(Base):
     name = Column(String, nullable=False)
     description = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default='active')  # active, completed
     
     user = relationship("User", back_populates="projects")
-    processing_sessions = relationship("ProcessingSession", back_populates="project")
     extractions = relationship("Extraction", back_populates="project")
     analyses = relationship("Analysis", back_populates="project")
-
-class ProcessingSession(Base):
-    __tablename__ = 'processing_sessions'
-    
-    id = Column(Integer, primary_key=True)
-    user_id = Column(String, ForeignKey('users.id'))
-    session_name = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_active = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    status = Column(String, default='active')  # active, completed
-    project_id = Column(Integer, ForeignKey('projects.id'))
-    
-    user = relationship("User", back_populates="processing_sessions")
-    extractions = relationship("Extraction", back_populates="processing_session")
-    analyses = relationship("Analysis", back_populates="processing_session")
-    project = relationship("Project", back_populates="processing_sessions")
 
 class Extraction(Base):
     __tablename__ = 'extractions'
     
     id = Column(Integer, primary_key=True)
-    session_id = Column(Integer, ForeignKey('processing_sessions.id'))
+    project_id = Column(Integer, ForeignKey('projects.id'))
     user_id = Column(String, ForeignKey('users.id'))
     file_name = Column(String, nullable=False)
     content = Column(String)
     file_hash = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     processing_status = Column(String)
-    project_id = Column(Integer, ForeignKey('projects.id'))
     
-    processing_session = relationship("ProcessingSession", back_populates="extractions")
-    analyses = relationship("Analysis", secondary="analysis_extraction", back_populates="extractions")
     project = relationship("Project", back_populates="extractions")
+    analyses = relationship("Analysis", secondary="analysis_extraction", back_populates="extractions")
 
 class Analysis(Base):
     __tablename__ = 'analyses'
     
     id = Column(Integer, primary_key=True)
-    session_id = Column(Integer, ForeignKey('processing_sessions.id'))
+    project_id = Column(Integer, ForeignKey('projects.id'))
     user_id = Column(String, ForeignKey('users.id'))
     instructions = Column(JSON)
     results = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String)
     analysis_type = Column(String)  # 'single' or 'batch'
-    project_id = Column(Integer, ForeignKey('projects.id'))
     
-    processing_session = relationship("ProcessingSession", back_populates="analyses")
-    extractions = relationship("Extraction", secondary="analysis_extraction", back_populates="analyses")
     project = relationship("Project", back_populates="analyses")
+    extractions = relationship("Extraction", secondary="analysis_extraction", back_populates="analyses")
 
 # Association table for many-to-many relationship between Analysis and Extraction
 analysis_extraction = Table(
