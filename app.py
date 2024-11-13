@@ -9,7 +9,6 @@ from typing import List, Dict, Any
 from sqlalchemy import desc
 import json
 
-from config import init_config, get_database_url
 
 from auth import KeycloakAuth, login_required, role_required
 from models import init_db, User, Extraction, Analysis, ProcessingSession
@@ -24,8 +23,7 @@ import streamlit_nested_layout
 # db_session = init_db(os.getenv('DATABASE_URL'))
 # keycloak_auth = KeycloakAuth()
 
-config = init_config()
-db_session = init_db(get_database_url())
+db_session = init_db('postgresql://fileprocessor:yourpassword@localhost:5432/fileprocessor')
 
 if os.getenv("DEV") == "True":
     from dev_auth import DevAuth
