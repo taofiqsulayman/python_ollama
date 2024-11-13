@@ -25,7 +25,7 @@ import streamlit_nested_layout
 # keycloak_auth = KeycloakAuth()
 
 config = init_config()
-db_session = init_db(get_database_url())
+db_session = init_db('postgresql://fileprocessor:yourpassword@localhost:5432/fileprocessor')
 
 if os.getenv("DEV") == "True":
     from dev_auth import DevAuth
