@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from sqlalchemy import desc
 import json
-
+import zipfile
+from io import BytesIO
 
 from auth import KeycloakAuth, login_required, role_required
 from models import init_db, User, Extraction, Analysis, Project
@@ -19,9 +20,6 @@ import time
 from collections import Counter
 import streamlit_nested_layout
 
-# Initialize services
-# db_session = init_db(os.getenv('DATABASE_URL'))
-# keycloak_auth = KeycloakAuth()
 
 db_session = init_db('postgresql://fileprocessor:yourpassword@localhost:5432/fileprocessor')
 
@@ -132,6 +130,72 @@ def create_project(session: Session, user_id: str, name: str, description: str) 
 def get_user_projects(session: Session, user_id: str) -> List[Project]:
     return session.query(Project).filter_by(user_id=user_id).all()
 
+def create_project_zip(project: Project) -> BytesIO:
+    """Create a ZIP file containing all project files and their analyses"""
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        # Save extractions
+        for extraction in project.extractions:
+            file_name = f"extractions/{extraction.file_name}_content.txt"
+            zip_file.writestr(file_name, extraction.content)
+        
+        # Save analyses
+        for analysis in project.analyses:
+            # Save instructions
+            if analysis.instructions:
+                file_name = f"analyses/analysis_{analysis.id}/instructions.json"
+                zip_file.writestr(file_name, json.dumps(analysis.instructions, indent=2))
+            
+            # Save results
+            if analysis.results:
+                file_name = f"analyses/analysis_{analysis.id}/results.json"
+                zip_file.writestr(file_name, json.dumps(analysis.results, indent=2))
+                
+                # If it's a batch analysis, also save as CSV
+                if analysis.analysis_type == "batch" and "batch_results" in analysis.results:
+                    results_df = pd.DataFrame([
+                        {'File': res['file_name'], **res['results']}
+                        for res in analysis.results['batch_results']
+                    ])
+                    file_name = f"analyses/analysis_{analysis.id}/results.csv"
+                    zip_file.writestr(file_name, results_df.to_csv(index=False))
+    
+    zip_buffer.seek(0)
+    return zip_buffer
+
+def create_project_json(project: Project) -> dict:
+    """Create a JSON representation of the entire project"""
+    return {
+        "project_info": {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "created_at": project.created_at.isoformat(),
+            "status": project.status
+        },
+        "extractions": [
+            {
+                "id": extraction.id,
+                "file_name": extraction.file_name,
+                "content": extraction.content,
+                "created_at": extraction.created_at.isoformat(),
+                "status": extraction.processing_status
+            }
+            for extraction in project.extractions
+        ],
+        "analyses": [
+            {
+                "id": analysis.id,
+                "instructions": analysis.instructions,
+                "results": analysis.results,
+                "created_at": analysis.created_at.isoformat(),
+                "status": analysis.status,
+                "type": analysis.analysis_type
+            }
+            for analysis in project.analyses
+        ]
+    }
+
 # UI Components
 def render_sidebar():
     """Render sidebar with user info and logout button"""
@@ -150,7 +214,7 @@ def render_sidebar():
         
         st.markdown("---")
         st.markdown("### Navigation")
-        stages = ["project", "upload", "show_text"]
+        stages = ["projects", "upload", "show_text"]
         if st.session_state.get("user_role") == "advanced":
             stages.extend(["add_instructions", "analyze"])
         
@@ -179,7 +243,7 @@ def login_page():
                         "user_id": user_info['sub'],
                         "username": user_info['preferred_username'],
                         "user_role": user_info.get('role', 'basic'),
-                        "stage": "project"
+                        "stage": "projects"
                     })
                     st.experimental_rerun()
                 else:
@@ -232,6 +296,29 @@ def project_page():
                         **Status:** {project.status}  
                         **Created:** {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}
                     """)
+                    
+                    # Download options
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if project.extractions or project.analyses:
+                            zip_buffer = create_project_zip(project)
+                            st.download_button(
+                                "📥 Download All Files (ZIP)",
+                                zip_buffer,
+                                file_name=f"project_{project.id}_{project.name}.zip",
+                                mime="application/zip",
+                                key=f"zip_{project.id}"
+                            )
+                    with col2:
+                        if project.extractions or project.analyses:
+                            project_json = create_project_json(project)
+                            st.download_button(
+                                "📥 Download All (JSON)",
+                                json.dumps(project_json, indent=2),
+                                file_name=f"project_{project.id}_{project.name}.json",
+                                mime="application/json",
+                                key=f"json_{project.id}"
+                            )
                     
                     # Select project button
                     if st.button("Select Project", key=f"select_{project.id}"):
@@ -559,7 +646,7 @@ def main():
     
     if st.session_state.stage == "login":
         login_page()
-    elif st.session_state.stage == "project":
+    elif st.session_state.stage == "projects":
         project_page()
     elif st.session_state.stage == "upload":
         upload_page()
@@ -570,4 +657,5 @@ def main():
     elif st.session_state.stage == "analyze":
         analyze_page()
 
-if __name__ == "__main__":    main()
+if __name__ == "__main__":
+    main()
