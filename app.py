@@ -1,4 +1,5 @@
 import os
+from uuid import uuid4
 import streamlit as st
 import tempfile
 from pathlib import Path
@@ -19,6 +20,7 @@ import time
 
 from collections import Counter
 import streamlit_nested_layout
+import uuid
 
 
 db_session = init_db('postgresql://fileprocessor:yourpassword@localhost:5432/fileprocessor')
@@ -380,14 +382,14 @@ def project_page():
                                                 "Download CSV",
                                                 results_df.to_csv(index=False),
                                                 file_name=f"analysis_{analysis.id}_results.csv",
-                                                key=f"csv_{analysis.id}"
+                                                key=f"{uuid.uuid4()}"
                                             )
                                         with col2:
                                             st.download_button(
                                                 "Download JSON",
                                                 json.dumps(analysis.results, indent=2),
                                                 file_name=f"analysis_{analysis.id}_results.json",
-                                                key=f"json_{analysis.id}"
+                                                key=f"{uuid.uuid4()}"
                                             )
     
     finally:
