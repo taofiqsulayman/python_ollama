@@ -1,10 +1,9 @@
 import os
-from uuid import uuid4
 import streamlit as st
 import tempfile
 from pathlib import Path
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from sqlalchemy import desc
@@ -339,6 +338,11 @@ def project_page():
                         **Status:** {project.status}  
                         **Created:** {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}
                     """)
+                    
+                    # Display last chat response
+                    last_convo = session.query(Conversation).filter_by(project_id=project.id).order_by(desc(Conversation.timestamp)).first()
+                    if last_convo:
+                        st.markdown(f"**Last Chat Response:** {last_convo.response}")
                     
                     # Download options
                     col1, col2 = st.columns(2)
@@ -699,6 +703,7 @@ def analyze_page():
     finally:
         session.close()
 
+@login_required
 def chat_page():
     """Render chat page for interacting with documents"""
     st.title("Chat with Document")
@@ -732,7 +737,7 @@ def chat_page():
             st.markdown(
                 f"""
                 <div style='border-radius: 10px; padding: 10px; margin: 10px 0;'>
-                    <div style='text-align: right;'><b>User:</b> {convo.user_input}</div>
+                    <div style='text-align: right; font-weight: bold'><b>User:</b> {convo.user_input}</div>
                 </div>
                 """, 
                 unsafe_allow_html=True
@@ -741,7 +746,7 @@ def chat_page():
             st.markdown(
                 f"""
                 <div style='border-radius: 10px; padding: 10px; margin: 10px 0;'>
-                    <div style='text-align: left;'><b>Response:</b> {convo.response}</div>
+                    <div style='text-align: left; font-weight: bold'><b>Response:</b> {convo.response}</div>
                 </div>
                 """, 
                 unsafe_allow_html=True
