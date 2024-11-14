@@ -144,7 +144,8 @@ def get_user_projects(session: Session, user_id: str) -> List[Project]:
     return session.query(Project).filter_by(user_id=user_id).all()
 
 def create_project_zip(project: Project) -> BytesIO:
-    """Create a ZIP file containing all project files and their analyses"""
+    """Create a ZIP file containing all project files, their analyses, and conversation history"""
+    session = db_session()
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         # Save extractions
@@ -172,13 +173,29 @@ def create_project_zip(project: Project) -> BytesIO:
                     ])
                     file_name = f"analyses/analysis_{analysis.id}/results.csv"
                     zip_file.writestr(file_name, results_df.to_csv(index=False))
+        
+        # Save conversation history
+        for extraction in project.extractions:
+            conversations = session.query(Conversation).filter_by(document_id=extraction.id).all()
+            if conversations:
+                convo_data = [
+                    {
+                        "user_input": convo.user_input,
+                        "response": convo.response,
+                        "timestamp": convo.timestamp.isoformat()
+                    }
+                    for convo in conversations
+                ]
+                file_name = f"conversations/{extraction.file_name}_conversation.json"
+                zip_file.writestr(file_name, json.dumps(convo_data, indent=2))
     
     zip_buffer.seek(0)
     return zip_buffer
 
 def create_project_json(project: Project) -> dict:
     """Create a JSON representation of the entire project"""
-    return {
+    session = db_session()
+    project_json = {
         "project_info": {
             "id": project.id,
             "name": project.name,
@@ -206,8 +223,18 @@ def create_project_json(project: Project) -> dict:
                 "type": analysis.analysis_type
             }
             for analysis in project.analyses
+        ],
+        "conversations": [
+            {
+                "document_id": convo.document_id,
+                "user_input": convo.user_input,
+                "response": convo.response,
+                "timestamp": convo.timestamp.isoformat()
+            }
+            for convo in session.query(Conversation).filter_by(project_id=project.id).all()
         ]
     }
+    return project_json
 
 # UI Components
 def render_sidebar():
@@ -689,33 +716,56 @@ def chat_page():
             st.warning("No extracted files found for this project.")
             return
         
-        # Select a document to chat with
+        # Select documents to chat with
         document_options = {extraction.file_name: extraction.id for extraction in extractions}
-        selected_document = st.selectbox("Select Document", list(document_options.keys()))
-        document_id = document_options[selected_document]
-        document_content = session.query(Extraction).filter_by(id=document_id).first().content
+        selected_documents = st.multiselect("Select Documents", list(document_options.keys()))
+        document_ids = [document_options[doc] for doc in selected_documents]
+        document_contents = [session.query(Extraction).filter_by(id=doc_id).first().content for doc_id in document_ids]
+        combined_content = "\n\n".join(document_contents)
         
         # Display conversation history
-        conversation_history = session.query(Conversation).filter_by(document_id=document_id).order_by(Conversation.timestamp).all()
+        conversation_history = []
+        for doc_id in document_ids:
+            conversation_history.extend(session.query(Conversation).filter_by(document_id=doc_id).order_by(Conversation.timestamp).all())
+        
         for convo in conversation_history:
-            st.markdown(f"**User:** {convo.user_input}")
-            st.markdown(f"**Response:** {convo.response}")
+            st.markdown(
+                f"""
+                <div style='border-radius: 10px; padding: 10px; margin: 10px 0;'>
+                    <div style='text-align: right;'><b>User:</b> {convo.user_input}</div>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+            
+            st.markdown(
+                f"""
+                <div style='border-radius: 10px; padding: 10px; margin: 10px 0;'>
+                    <div style='text-align: left;'><b>Response:</b> {convo.response}</div>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
         
         # User input for chat
         user_input = st.text_input("Your message")
         if st.button("Send"):
-            response = chat_with_document(document_content, user_input, conversation_history)
+            response = chat_with_document(combined_content, user_input, conversation_history)
             
             # Save conversation to database
-            new_convo = Conversation(
-                user_id=st.session_state.user_id,
-                project_id=st.session_state.current_project_id,
-                document_id=document_id,
-                user_input=user_input,
-                response=response
-            )
-            session.add(new_convo)
+            for doc_id in document_ids:
+                new_convo = Conversation(
+                    user_id=st.session_state.user_id,
+                    project_id=st.session_state.current_project_id,
+                    document_id=doc_id,
+                    user_input=user_input,
+                    response=response
+                )
+                session.add(new_convo)
             session.commit()
+            
+            # Clear user input box
+            st.session_state["user_input"] = ""
             
             # Refresh the page to display the new conversation
             st.experimental_rerun()
