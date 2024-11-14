@@ -1,12 +1,7 @@
-from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, ForeignKey, Table
+from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, ForeignKey, Table, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
-from huggingface_hub import InferenceClient
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 Base = declarative_base()
 
@@ -19,6 +14,11 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     projects = relationship("Project", back_populates="user")
+    
+    __table_args__ = (
+        Index('idx_user_id', 'id'),
+        Index('idx_username', 'username'),
+    )
 
 class Project(Base):
     __tablename__ = 'projects'
@@ -71,35 +71,25 @@ analysis_extraction = Table(
     Column('extraction_id', Integer, ForeignKey('extractions.id'))
 )
 
+class Conversation(Base):
+    __tablename__ = 'conversations'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, ForeignKey('users.id'))
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    document_id = Column(Integer, ForeignKey('extractions.id'))
+    user_input = Column(String, nullable=False)
+    response = Column(String, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User")
+    project = relationship("Project")
+    document = relationship("Extraction")
+
 def init_db(database_url: str):
+    if not database_url:
+        raise ValueError("Database URL must be provided")
     engine = create_engine(database_url)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     return Session
-
-def summarize_image(image_url: str, prompt: str) -> str:
-    client = InferenceClient(api_key=os.getenv("API_KEY"))
-
-    response = client.chat_completion(
-        model="meta-llama/Llama-3.2-11B-Vision-Instruct",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ],
-            }
-        ],
-        max_tokens=500,
-        stream=False,
-    )
-
-    response_text = ""
-    if response.choices and len(response.choices) > 0:
-        response_text = response.choices[0].message.content
-
-    return response_text.strip()

@@ -1,5 +1,9 @@
 import ollama
 import orjson
+from huggingface_hub import InferenceClient
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 def extract_json_from_response(response):
     
@@ -50,4 +54,44 @@ def run_inference_on_document(data: str, instructions: list):
     return refined_response
 
     
-    
+def summarize_image(image_url: str, prompt: str) -> str:
+    client = InferenceClient(api_key=os.getenv("API_KEY"))
+
+    response = client.chat_completion(
+        model="meta-llama/Llama-3.2-11B-Vision-Instruct",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {
+                        "type": "text",
+                        "text": prompt
+                    }
+                ],
+            }
+        ],
+        max_tokens=500,
+        stream=False,
+    )
+
+    response_text = ""
+    if response.choices and len(response.choices) > 0:
+        response_text = response.choices[0].message.content
+
+    return response_text.strip()
+
+
+def chat_with_document(document_content: str, user_input: str, conversation_history: list):
+    prompt = f"""You are a professional Data Analyst. Here is the document content: {document_content}
+    Here is the conversation history: {conversation_history}
+    User: {user_input}
+    Please respond accordingly.
+    """
+
+    response = ollama.generate(
+        model="llama3.2",
+        prompt=prompt,
+        stream=False
+    )
+    return response.get("response", "").strip()

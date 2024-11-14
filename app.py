@@ -10,8 +10,8 @@ import json
 import zipfile
 from io import BytesIO
 from auth import login_required, role_required
-from models import init_db, User, Extraction, Analysis, Project, summarize_image
-from ollama_setup import run_inference_on_document
+from models import init_db, User, Extraction, Analysis, Project, Conversation
+from ollama_setup import run_inference_on_document, summarize_image, chat_with_document
 import time
 import uuid
 import asyncio
@@ -19,8 +19,11 @@ from utils.file_type.csv import process_csv
 from utils.file_type.doc import process_docx
 from utils.file_type.pdf import process_pdf
 from utils.result_handler import (construct_tables_content, construct_images_content)
-
 from dotenv import load_dotenv
+
+# this is important to be able to nest expanders for a cleaner UI
+import streamlit_nested_layout      # DO NOT REMOVE
+
 
 load_dotenv()
 
@@ -63,7 +66,7 @@ def reset_session_state():
         "extracted_files": [],
         "instructions": [],
         "uploaded_files": [],
-        "current_project_id": None
+        "current_project_id": None,
     })
 
 init_session_state()
@@ -227,9 +230,9 @@ def render_sidebar():
         
         st.markdown("---")
         st.markdown("### Navigation")
-        stages = ["projects", "upload", "show_text"]
-        if st.session_state.get("user_role") == "advanced":
-            stages.extend(["add_instructions", "analyze"])
+        stages = ["projects", "upload", "show_text", "add_instructions", "analyze", "chat"]
+        # if st.session_state.get("user_role") == "advanced":
+        #     stages.extend(["add_instructions", "analyze", "chat"])
         
         for stage in stages:
             if st.button(stage.replace("_", " ").title(), key=f"nav_{stage}"):
@@ -277,7 +280,7 @@ def project_page():
         
         # Display metrics
         st.markdown("## Overview")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Projects", len(projects))
         with col2:
@@ -286,6 +289,9 @@ def project_page():
         with col3:
             total_analyses = sum(len(project.analyses) for project in projects)
             st.metric("Total Analyses", total_analyses)
+        with col4:
+            total_conversations = sum(session.query(Conversation).filter_by(project_id=project.id).count() for project in projects)
+            st.metric("Total Conversations", total_conversations)
         
         # Create Project section
         with st.expander("Create New Project"):
@@ -298,135 +304,134 @@ def project_page():
                     new_project = create_project(session, st.session_state.user_id, name, description)
                     st.session_state.current_project_id = new_project.id
                     st.session_state.stage = "upload"
-                    st.rerun()
+                    st.experimental_rerun()
         
         # Previous Projects section
         with st.expander("Previous Projects"):
             for project in projects:
-                # Main project expander (do not nest any expanders within this)
-                st.markdown(f"### 📁 {project.name} - Created: {project.created_at.strftime('%Y-%m-%d %H:%M')}")
-
-                # Project info
-                st.markdown(f"""
-                    **Description:** {project.description}  
-                    **Status:** {project.status}  
-                    **Created:** {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}
-                """)
-
-                # Download options
-                col1, col2 = st.columns(2)
-                with col1:
-                    if project.extractions or project.analyses:
-                        zip_buffer = create_project_zip(project)
-                        st.download_button(
-                            "📥 Download All Files (ZIP)",
-                            zip_buffer,
-                            file_name=f"project_{project.id}_{project.name}.zip",
-                            mime="application/zip",
-                            key=f"zip_{project.id}"
-                        )
-                with col2:
-                    if project.extractions or project.analyses:
-                        project_json = create_project_json(project)
-                        st.download_button(
-                            "📥 Download All (JSON)",
-                            json.dumps(project_json, indent=2),
-                            file_name=f"project_{project.id}_{project.name}.json",
-                            mime="application/json",
-                            key=f"json_{project.id}"
-                        )
-
-                # Select project button
-                if st.button("Select Project", key=f"select_{project.id}"):
-                    st.session_state.current_project_id = project.id
-                    st.session_state.extracted_files = [
-                        {
-                            "file_name": extraction.file_name,
-                            "content": extraction.content,
-                            "extraction_id": extraction.id
-                        }
-                        for extraction in project.extractions
-                    ]
-                    st.session_state.instructions = [
-                        {
-                            "title": instruction["title"],
-                            "data_type": instruction["data_type"],
-                            "description": instruction["description"]
-                        }
-                        for analysis in project.analyses
-                        for instruction in analysis.instructions
-                    ]
-                    st.session_state.stage = "upload"
-                    st.rerun()
-
-                # Files section
-                if project.extractions:
-                    st.markdown("#### Files")
-                    for extraction in project.extractions:
-                        # Use columns or subheadings instead of nested expanders
-                        st.markdown(f"**File:** {extraction.file_name}")
-                        st.markdown(f"**Status:** {extraction.processing_status}")
-
-                        if extraction.content:
+                with st.expander(f"📁 {project.name} - Created: {project.created_at.strftime('%Y-%m-%d %H:%M')}"):
+                    # Project info
+                    st.markdown(f"""
+                        **Description:** {project.description}  
+                        **Status:** {project.status}  
+                        **Created:** {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}
+                    """)
+                    
+                    # Display last chat response
+                    last_convo = session.query(Conversation).filter_by(project_id=project.id).order_by(desc(Conversation.timestamp)).first()
+                    if last_convo:
+                        st.markdown(f"**Last Chat Response:** {last_convo.response}")
+                    
+                    # Download options
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if project.extractions or project.analyses:
+                            zip_buffer = create_project_zip(project)
                             st.download_button(
-                                "Download Content",
-                                extraction.content,
-                                file_name=f"{extraction.file_name}_content.txt",
-                                mime="text/plain",
-                                key=f"dl_{extraction.id}"
+                                "📥 Download All Files (ZIP)",
+                                zip_buffer,
+                                file_name=f"project_{project.id}_{project.name}.zip",
+                                mime="application/zip",
+                                key=f"zip_{project.id}"
                             )
-
-                            # Content Preview
-                            preview_length = 300
-                            preview = extraction.content[:preview_length]
-                            if len(extraction.content) > preview_length:
-                                preview += "..."
-                            st.markdown("**Content Preview**")
-                            st.markdown(preview)
-
-                # Analysis section
-                if project.analyses:
-                    st.markdown("#### Analyses")
-                    for analysis in project.analyses:
-                        # Use columns or subheadings instead of nested expanders
-                        st.markdown(f"**Analysis ID:** {analysis.id}")
-
-                        # Instructions
-                        if analysis.instructions:
-                            st.markdown("**Instructions**")
-                            for instr in analysis.instructions:
-                                st.markdown(f"""
-                                    - **{instr['title']}**
-                                    - Type: {instr.get('data_type', 'N/A')}
-                                    - Description: {instr.get('description', 'N/A')}
-                                """)
-
-                        # Results
-                        if analysis.results:
-                            st.markdown("**Results**")
-                            if analysis.analysis_type == "batch":
-                                results_df = pd.DataFrame([
-                                    {'File': res['file_name'], **res['results']}
-                                    for res in analysis.results['batch_results']
-                                ])
-                                st.dataframe(results_df)
-
-                                col1, col2 = st.columns(2)
-                                with col1:
+                    with col2:
+                        if project.extractions or project.analyses:
+                            project_json = create_project_json(project)
+                            st.download_button(
+                                "📥 Download All (JSON)",
+                                json.dumps(project_json, indent=2),
+                                file_name=f"project_{project.id}_{project.name}.json",
+                                mime="application/json",
+                                key=f"json_{project.id}"
+                            )
+                    
+                    # Select project button
+                    if st.button("Select Project", key=f"select_{project.id}"):
+                        st.session_state.current_project_id = project.id
+                        st.session_state.extracted_files = [
+                            {
+                                "file_name": extraction.file_name,
+                                "content": extraction.content,
+                                "extraction_id": extraction.id
+                            }
+                            for extraction in project.extractions
+                        ]
+                        st.session_state.instructions = [
+                            {
+                                "title": instruction["title"],
+                                "data_type": instruction["data_type"],
+                                "description": instruction["description"]
+                            }
+                            for analysis in project.analyses
+                            for instruction in analysis.instructions
+                        ]
+                        st.session_state.stage = "upload"
+                        st.experimental_rerun()
+                    
+                    # Files section
+                    if project.extractions:
+                        st.markdown("### Files")
+                        for extraction in project.extractions:
+                            with st.expander(f"📄 {extraction.file_name}"):
+                                st.markdown(f"**Status:** {extraction.processing_status}")
+                                
+                                if extraction.content:
                                     st.download_button(
-                                        "Download CSV",
-                                        results_df.to_csv(index=False),
-                                        file_name=f"analysis_{analysis.id}_results.csv",
-                                        key=f"{uuid.uuid4()}"
+                                        "Download Content",
+                                        extraction.content,
+                                        file_name=f"{extraction.file_name}_content.txt",
+                                        mime="text/plain",
+                                        key=f"dl_{extraction.id}"
                                     )
-                                with col2:
-                                    st.download_button(
-                                        "Download JSON",
-                                        json.dumps(analysis.results, indent=2),
-                                        file_name=f"analysis_{analysis.id}_results.json",
-                                        key=f"{uuid.uuid4()}"
-                                    )
-
+                                    
+                                    with st.expander("Content Preview"):
+                                        preview_length = 300
+                                        preview = extraction.content[:preview_length]
+                                        if len(extraction.content) > preview_length:
+                                            preview += "..."
+                                        st.markdown(preview)
+                    
+                    # Analysis section
+                    if project.analyses:
+                        st.markdown("### Analyses")
+                        for analysis in project.analyses:
+                            with st.expander(f"🔍 Analysis {analysis.id}"):
+                                # Instructions
+                                if analysis.instructions:
+                                    st.markdown("#### Instructions")
+                                    for instr in analysis.instructions:
+                                        st.markdown(f"""
+                                            - **{instr['title']}**
+                                            - Type: {instr.get('data_type', 'N/A')}
+                                            - Description: {instr.get('description', 'N/A')}
+                                        """)
+                                
+                                # Results
+                                if analysis.results:
+                                    st.markdown("#### Results")
+                                    if analysis.analysis_type == "batch":
+                                        results_df = pd.DataFrame([
+                                            {'File': res['file_name'], **res['results']}
+                                            for res in analysis.results['batch_results']
+                                        ])
+                                        st.dataframe(results_df)
+                                        
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            st.download_button(
+                                                "Download CSV",
+                                                results_df.to_csv(index=False),
+                                                file_name=f"analysis_{analysis.id}_results.csv",
+                                                key=f"{uuid.uuid4()}"
+                                            )
+                                        with col2:
+                                            st.download_button(
+                                                "Download JSON",
+                                                json.dumps(analysis.results, indent=2),
+                                                file_name=f"analysis_{analysis.id}_results.json",
+                                                key=f"{uuid.uuid4()}"
+                                            )
+    
     finally:
         session.close()
 
@@ -491,7 +496,7 @@ def handle_docx_extraction(uploaded_file, extracted_files):
         extracted_files.append(save_extraction_content(uploaded_file, text, 'Text'))
         if extracted_files:
             st.session_state.extracted_files = extracted_files
-            st.session_state.stage = f"show_text"
+            st.session_state.stage = "show_text"
             st.rerun()
 
 
@@ -503,7 +508,7 @@ def handle_csv_extraction(uploaded_file, extracted_files):
         extracted_files.append(save_extraction_content(uploaded_file, text, 'Text'))
         if extracted_files:
             st.session_state.extracted_files = extracted_files
-            st.session_state.stage = f"show_text"
+            st.session_state.stage = "show_text"
             st.rerun()
 
 
@@ -599,7 +604,7 @@ def display_image_content(image_data):
                 key=prompt_key,
                 placeholder="Enter your question here"
             )
-            if st.button(f"Submit", key=f"submit_{data['image_index'] - 1}"):
+            if st.button("Submit", key=f"submit_{data['image_index'] - 1}"):
                 if prompt:
                     st.write(summarize_image(data["image_url"], prompt))
                 else:
@@ -607,7 +612,7 @@ def display_image_content(image_data):
 
 
 @login_required
-@role_required("advanced")
+# @role_required("advanced")
 def add_instructions_page():
     """Render instructions page"""
     st.title("Analysis Instructions")
@@ -637,7 +642,7 @@ def add_instructions_page():
             st.rerun()
 
 @login_required
-@role_required("advanced")
+# @role_required("advanced")
 def analyze_page():
     """Render analysis page with normalized data handling"""
     st.title("Analysis Results")
@@ -778,6 +783,86 @@ def analyze_page():
         st.exception(e)
     finally:
         session.close()
+        
+        
+@login_required
+def chat_page():
+    """Render chat page for interacting with documents"""
+    st.title("Chat with Document")
+    
+    if "current_project_id" not in st.session_state:
+        st.session_state.stage = "projects"
+        st.experimental_rerun()
+    
+    session = db_session()
+    try:
+        # Fetch extracted files for the current project
+        extractions = session.query(Extraction).filter_by(project_id=st.session_state.current_project_id).all()
+        
+        if not extractions:
+            st.warning("No extracted files found for this project.")
+            return
+        
+        # Select documents to chat with
+        document_options = {extraction.file_name: extraction.id for extraction in extractions}
+        selected_documents = st.multiselect("Select Documents", list(document_options.keys()))
+        document_ids = [document_options[doc] for doc in selected_documents]
+        
+        # Combine contents with identifiers
+        document_contents = [
+            f"file name: {doc_name}\ncontent:\n{session.query(Extraction).filter_by(id=doc_id).first().content}\n{'-'*10}"
+            for doc_name, doc_id in zip(selected_documents, document_ids)
+        ]
+        combined_content = "\n\n".join(document_contents)
+                
+        # Display conversation history
+        conversation_history = []
+        for doc_id in document_ids:
+            conversation_history.extend(session.query(Conversation).filter_by(document_id=doc_id).order_by(Conversation.timestamp).all())
+        
+        for convo in conversation_history:
+            st.markdown(
+                f"""
+                <div style='border-radius: 10px; padding: 10px; margin: 10px 0;'>
+                    <div style='text-align: right; font-weight: bold'><b>User:</b> {convo.user_input}</div>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+            
+            st.markdown(
+                f"""
+                <div style='border-radius: 10px; padding: 10px; margin: 10px 0;'>
+                    <div style='text-align: left; font-weight: bold'><b>Response:</b> {convo.response}</div>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+        
+        # User input for chat
+        user_input = st.text_input("Your message")
+        if st.button("Send"):
+            response = chat_with_document(combined_content, user_input, conversation_history)
+            
+            # Save conversation to database
+            for doc_id in document_ids:
+                new_convo = Conversation(
+                    user_id=st.session_state.user_id,
+                    project_id=st.session_state.current_project_id,
+                    document_id=doc_id,
+                    user_input=user_input,
+                    response=response
+                )
+                session.add(new_convo)
+            session.commit()
+            
+            # Clear user input box
+            st.session_state["user_input"] = ""
+            
+            # Refresh the page to display the new conversation
+            st.experimental_rerun()
+    finally:
+        session.close()
 
 
 # Main app routing
@@ -800,6 +885,8 @@ def main():
         add_instructions_page()
     elif st.session_state.stage == "analyze":
         analyze_page()
+    elif st.session_state.stage == "chat":
+        chat_page()
 
 if __name__ == "__main__":
     main()

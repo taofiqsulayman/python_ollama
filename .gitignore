@@ -3,4 +3,12 @@ venv/*
 /data/*
 .ollama
 .ollama/*
-__pycache__
+__pycache__/*
+utils/__pycache__/*
+utils/file_type/__pycache__/*
+*.pyc
+./.vscode/*
+./.idea/*
+./.pytest_cache/*
+./__pycache__/*
+./.logs/*
