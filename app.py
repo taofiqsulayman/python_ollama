@@ -305,7 +305,7 @@ def project_page():
         
         # Display metrics
         st.markdown("## Overview")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Projects", len(projects))
         with col2:
@@ -314,6 +314,9 @@ def project_page():
         with col3:
             total_analyses = sum(len(project.analyses) for project in projects)
             st.metric("Total Analyses", total_analyses)
+        with col4:
+            total_conversations = sum(session.query(Conversation).filter_by(project_id=project.id).count() for project in projects)
+            st.metric("Total Conversations", total_conversations)
         
         # Create Project section
         with st.expander("Create New Project"):
