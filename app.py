@@ -1,3 +1,4 @@
+from calendar import c
 import os
 import streamlit as st
 import tempfile
@@ -728,9 +729,14 @@ def chat_page():
         document_options = {extraction.file_name: extraction.id for extraction in extractions}
         selected_documents = st.multiselect("Select Documents", list(document_options.keys()))
         document_ids = [document_options[doc] for doc in selected_documents]
-        document_contents = [session.query(Extraction).filter_by(id=doc_id).first().content for doc_id in document_ids]
-        combined_content = "\n\n".join(document_contents)
         
+        # Combine contents with identifiers
+        document_contents = [
+            f"file name: {doc_name}\ncontent:\n{session.query(Extraction).filter_by(id=doc_id).first().content}\n{'-'*10}"
+            for doc_name, doc_id in zip(selected_documents, document_ids)
+        ]
+        combined_content = "\n\n".join(document_contents)
+                
         # Display conversation history
         conversation_history = []
         for doc_id in document_ids:
