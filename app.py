@@ -1,27 +1,28 @@
 import os
-from uuid import uuid4
 import streamlit as st
-import tempfile
 from pathlib import Path
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from sqlalchemy import desc
 import json
 import zipfile
 from io import BytesIO
-
-from auth import KeycloakAuth, login_required, role_required
-from models import init_db, User, Extraction, Analysis, Project
-from utils import process_files
+from auth import login_required, role_required
+from models import init_db, User, Extraction, Analysis, Project, summarize_image
 from ollama_setup import run_inference_on_document
 import time
-
-from collections import Counter
-import streamlit_nested_layout
 import uuid
+import asyncio
+from utils.file_type.csv import process_csv
+from utils.file_type.doc import process_docx
+from utils.file_type.pdf import process_pdf
+from utils.result_handler import (construct_tables_content, construct_images_content)
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 db_session = init_db('postgresql://fileprocessor:yourpassword@localhost:5432/fileprocessor')
 
@@ -222,7 +223,7 @@ def render_sidebar():
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 init_session_state()
-                st.experimental_rerun()
+                st.rerun()
         
         st.markdown("---")
         st.markdown("### Navigation")
@@ -233,7 +234,7 @@ def render_sidebar():
         for stage in stages:
             if st.button(stage.replace("_", " ").title(), key=f"nav_{stage}"):
                 st.session_state.stage = stage
-                st.experimental_rerun()
+                st.rerun()
 
 def login_page():
     """Render login page"""
@@ -258,7 +259,7 @@ def login_page():
                         "user_role": user_info.get('role', 'basic'),
                         "stage": "projects"
                     })
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Invalid token")
             else:
@@ -297,129 +298,135 @@ def project_page():
                     new_project = create_project(session, st.session_state.user_id, name, description)
                     st.session_state.current_project_id = new_project.id
                     st.session_state.stage = "upload"
-                    st.experimental_rerun()
+                    st.rerun()
         
         # Previous Projects section
         with st.expander("Previous Projects"):
             for project in projects:
-                with st.expander(f"📁 {project.name} - Created: {project.created_at.strftime('%Y-%m-%d %H:%M')}"):
-                    # Project info
-                    st.markdown(f"""
-                        **Description:** {project.description}  
-                        **Status:** {project.status}  
-                        **Created:** {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}
-                    """)
-                    
-                    # Download options
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if project.extractions or project.analyses:
-                            zip_buffer = create_project_zip(project)
+                # Main project expander (do not nest any expanders within this)
+                st.markdown(f"### 📁 {project.name} - Created: {project.created_at.strftime('%Y-%m-%d %H:%M')}")
+
+                # Project info
+                st.markdown(f"""
+                    **Description:** {project.description}  
+                    **Status:** {project.status}  
+                    **Created:** {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}
+                """)
+
+                # Download options
+                col1, col2 = st.columns(2)
+                with col1:
+                    if project.extractions or project.analyses:
+                        zip_buffer = create_project_zip(project)
+                        st.download_button(
+                            "📥 Download All Files (ZIP)",
+                            zip_buffer,
+                            file_name=f"project_{project.id}_{project.name}.zip",
+                            mime="application/zip",
+                            key=f"zip_{project.id}"
+                        )
+                with col2:
+                    if project.extractions or project.analyses:
+                        project_json = create_project_json(project)
+                        st.download_button(
+                            "📥 Download All (JSON)",
+                            json.dumps(project_json, indent=2),
+                            file_name=f"project_{project.id}_{project.name}.json",
+                            mime="application/json",
+                            key=f"json_{project.id}"
+                        )
+
+                # Select project button
+                if st.button("Select Project", key=f"select_{project.id}"):
+                    st.session_state.current_project_id = project.id
+                    st.session_state.extracted_files = [
+                        {
+                            "file_name": extraction.file_name,
+                            "content": extraction.content,
+                            "extraction_id": extraction.id
+                        }
+                        for extraction in project.extractions
+                    ]
+                    st.session_state.instructions = [
+                        {
+                            "title": instruction["title"],
+                            "data_type": instruction["data_type"],
+                            "description": instruction["description"]
+                        }
+                        for analysis in project.analyses
+                        for instruction in analysis.instructions
+                    ]
+                    st.session_state.stage = "upload"
+                    st.rerun()
+
+                # Files section
+                if project.extractions:
+                    st.markdown("#### Files")
+                    for extraction in project.extractions:
+                        # Use columns or subheadings instead of nested expanders
+                        st.markdown(f"**File:** {extraction.file_name}")
+                        st.markdown(f"**Status:** {extraction.processing_status}")
+
+                        if extraction.content:
                             st.download_button(
-                                "📥 Download All Files (ZIP)",
-                                zip_buffer,
-                                file_name=f"project_{project.id}_{project.name}.zip",
-                                mime="application/zip",
-                                key=f"zip_{project.id}"
+                                "Download Content",
+                                extraction.content,
+                                file_name=f"{extraction.file_name}_content.txt",
+                                mime="text/plain",
+                                key=f"dl_{extraction.id}"
                             )
-                    with col2:
-                        if project.extractions or project.analyses:
-                            project_json = create_project_json(project)
-                            st.download_button(
-                                "📥 Download All (JSON)",
-                                json.dumps(project_json, indent=2),
-                                file_name=f"project_{project.id}_{project.name}.json",
-                                mime="application/json",
-                                key=f"json_{project.id}"
-                            )
-                    
-                    # Select project button
-                    if st.button("Select Project", key=f"select_{project.id}"):
-                        st.session_state.current_project_id = project.id
-                        st.session_state.extracted_files = [
-                            {
-                                "file_name": extraction.file_name,
-                                "content": extraction.content,
-                                "extraction_id": extraction.id
-                            }
-                            for extraction in project.extractions
-                        ]
-                        st.session_state.instructions = [
-                            {
-                                "title": instruction["title"],
-                                "data_type": instruction["data_type"],
-                                "description": instruction["description"]
-                            }
-                            for analysis in project.analyses
-                            for instruction in analysis.instructions
-                        ]
-                        st.session_state.stage = "upload"
-                        st.experimental_rerun()
-                    
-                    # Files section
-                    if project.extractions:
-                        st.markdown("### Files")
-                        for extraction in project.extractions:
-                            with st.expander(f"📄 {extraction.file_name}"):
-                                st.markdown(f"**Status:** {extraction.processing_status}")
-                                
-                                if extraction.content:
+
+                            # Content Preview
+                            preview_length = 300
+                            preview = extraction.content[:preview_length]
+                            if len(extraction.content) > preview_length:
+                                preview += "..."
+                            st.markdown("**Content Preview**")
+                            st.markdown(preview)
+
+                # Analysis section
+                if project.analyses:
+                    st.markdown("#### Analyses")
+                    for analysis in project.analyses:
+                        # Use columns or subheadings instead of nested expanders
+                        st.markdown(f"**Analysis ID:** {analysis.id}")
+
+                        # Instructions
+                        if analysis.instructions:
+                            st.markdown("**Instructions**")
+                            for instr in analysis.instructions:
+                                st.markdown(f"""
+                                    - **{instr['title']}**
+                                    - Type: {instr.get('data_type', 'N/A')}
+                                    - Description: {instr.get('description', 'N/A')}
+                                """)
+
+                        # Results
+                        if analysis.results:
+                            st.markdown("**Results**")
+                            if analysis.analysis_type == "batch":
+                                results_df = pd.DataFrame([
+                                    {'File': res['file_name'], **res['results']}
+                                    for res in analysis.results['batch_results']
+                                ])
+                                st.dataframe(results_df)
+
+                                col1, col2 = st.columns(2)
+                                with col1:
                                     st.download_button(
-                                        "Download Content",
-                                        extraction.content,
-                                        file_name=f"{extraction.file_name}_content.txt",
-                                        mime="text/plain",
-                                        key=f"dl_{extraction.id}"
+                                        "Download CSV",
+                                        results_df.to_csv(index=False),
+                                        file_name=f"analysis_{analysis.id}_results.csv",
+                                        key=f"{uuid.uuid4()}"
                                     )
-                                    
-                                    with st.expander("Content Preview"):
-                                        preview_length = 300
-                                        preview = extraction.content[:preview_length]
-                                        if len(extraction.content) > preview_length:
-                                            preview += "..."
-                                        st.markdown(preview)
-                    
-                    # Analysis section
-                    if project.analyses:
-                        st.markdown("### Analyses")
-                        for analysis in project.analyses:
-                            with st.expander(f"🔍 Analysis {analysis.id}"):
-                                # Instructions
-                                if analysis.instructions:
-                                    st.markdown("#### Instructions")
-                                    for instr in analysis.instructions:
-                                        st.markdown(f"""
-                                            - **{instr['title']}**
-                                            - Type: {instr.get('data_type', 'N/A')}
-                                            - Description: {instr.get('description', 'N/A')}
-                                        """)
-                                
-                                # Results
-                                if analysis.results:
-                                    st.markdown("#### Results")
-                                    if analysis.analysis_type == "batch":
-                                        results_df = pd.DataFrame([
-                                            {'File': res['file_name'], **res['results']}
-                                            for res in analysis.results['batch_results']
-                                        ])
-                                        st.dataframe(results_df)
-                                        
-                                        col1, col2 = st.columns(2)
-                                        with col1:
-                                            st.download_button(
-                                                "Download CSV",
-                                                results_df.to_csv(index=False),
-                                                file_name=f"analysis_{analysis.id}_results.csv",
-                                                key=f"{uuid.uuid4()}"
-                                            )
-                                        with col2:
-                                            st.download_button(
-                                                "Download JSON",
-                                                json.dumps(analysis.results, indent=2),
-                                                file_name=f"analysis_{analysis.id}_results.json",
-                                                key=f"{uuid.uuid4()}"
-                                            )
-    
+                                with col2:
+                                    st.download_button(
+                                        "Download JSON",
+                                        json.dumps(analysis.results, indent=2),
+                                        file_name=f"analysis_{analysis.id}_results.json",
+                                        key=f"{uuid.uuid4()}"
+                                    )
+
     finally:
         session.close()
 
@@ -427,74 +434,177 @@ def project_page():
 def upload_page():
     """Render file upload page with session handling"""
     st.title("Upload Files")
-    
+
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "project"
-        st.experimental_rerun()
-    
-    uploaded_files = st.file_uploader(
-        "Upload supported files",
-        accept_multiple_files=True,
-        type=["pdf", "xlsx", "csv", "tsv", "docx", "doc", "txt", "jpg", "jpeg", "png"]
+        st.rerun()
+
+    uploaded_file = st.file_uploader("Upload a file", type=["pdf", "docx", "csv"])
+
+    if uploaded_file:
+        file_type = uploaded_file.name.split('.')[-1]
+        process_file(uploaded_file, file_type)
+
+
+def process_file(uploaded_file, file_type):
+    """Handles file processing for different types (PDF, DOC, DOCX, CSV)"""
+    session = db_session()
+    extracted_files = []
+
+    try:
+        if file_type == "pdf":
+            handle_pdf_extraction(uploaded_file, extracted_files)
+        elif file_type == "docx" or file_type == "doc":
+            handle_docx_extraction(uploaded_file, extracted_files)
+        elif file_type == "csv":
+            handle_csv_extraction(uploaded_file, extracted_files)
+    finally:
+        session.close()
+
+
+def handle_pdf_extraction(uploaded_file, extracted_files,):
+    """Handles PDF file processing and extraction"""
+    extraction_category = st.selectbox("Select extraction category", ["Text", "Tables", "Images"])
+    page_range_str = st.text_input("Enter page range (e.g., 1-3,5):")
+
+    if st.button("Process PDF"):
+        with st.spinner("Processing PDF... Please wait."):
+            result = asyncio.run(process_pdf(uploaded_file, page_range_str, extraction_category))
+            if "error" in result:
+                st.error(result["error"])
+                return
+            st.success(result["message"])
+
+            content = handle_extraction_content(extraction_category, result)
+            extracted_files.append(save_extraction_content(uploaded_file, content, extraction_category))
+            if extracted_files:
+                st.session_state.extracted_files = extracted_files
+                st.session_state.stage = f"show_{extraction_category.lower()}"
+                st.rerun()
+
+
+def handle_docx_extraction(uploaded_file, extracted_files):
+    """Handles DOCX file processing and text extraction"""
+    st.write("Processing File...")
+    with st.spinner("Processing DOCX... Please wait."):
+        text = process_docx(uploaded_file)
+        extracted_files.append(save_extraction_content(uploaded_file, text, 'Text'))
+        if extracted_files:
+            st.session_state.extracted_files = extracted_files
+            st.session_state.stage = f"show_text"
+            st.rerun()
+
+
+def handle_csv_extraction(uploaded_file, extracted_files):
+    """Handles CSV file processing and text extraction"""
+    st.write("Processing CSV...")
+    with st.spinner("Processing CSV... Please wait."):
+        text = process_csv(uploaded_file)
+        extracted_files.append(save_extraction_content(uploaded_file, text, 'Text'))
+        if extracted_files:
+            st.session_state.extracted_files = extracted_files
+            st.session_state.stage = f"show_text"
+            st.rerun()
+
+
+def handle_extraction_content(extraction_category, result):
+    """Determines content structure based on extraction category"""
+    if extraction_category == "Images":
+        return construct_images_content(result)
+    elif extraction_category == "Tables":
+        return construct_tables_content(result)
+    return result["data"]
+
+
+def save_extraction_content(uploaded_file, content, category):
+    """Saves extraction data to the database and returns extraction details"""
+    session = db_session()
+    extraction = Extraction(
+        user_id=st.session_state.user_id,
+        project_id=st.session_state.current_project_id,
+        file_name=uploaded_file.name,
+        content=json.dumps(content) if category != "Images" else "construct_images_content(result)", #update this to appropriate database content for images
+        processing_status="completed"
     )
-    
-    if st.button("Extract Text", key="extract_btn") and uploaded_files:
-        st.session_state.uploaded_files = uploaded_files
-        extracted_files = []
-        
-        with st.spinner("Extracting text..."):
-            with tempfile.TemporaryDirectory() as temp_dir:
-                input_dir = Path(temp_dir) / "input"
-                input_dir.mkdir()
-                
-                session = db_session()
-                try:
-                    for uploaded_file in uploaded_files:
-                        input_file = input_dir / uploaded_file.name
-                        with open(input_file, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
-                        
-                        extracted_text = process_files(input_file)
-                        extraction = Extraction(
-                            user_id=st.session_state.user_id,
-                            project_id=st.session_state.current_project_id,
-                            file_name=uploaded_file.name,
-                            content=extracted_text,
-                            processing_status="completed"
-                        )
-                        session.add(extraction)
-                        session.commit()
-                        
-                        extracted_files.append({
-                            "file_name": uploaded_file.name,
-                            "content": extracted_text,
-                            "extraction_id": extraction.id
-                        })
-                finally:
-                    session.close()
-        
-        st.session_state.extracted_files = extracted_files
-        st.session_state.stage = "show_text"
-        st.experimental_rerun()
+    session.add(extraction)
+    session.commit()
+    return {"file_name": uploaded_file.name, "content": content, "extraction_id": extraction.id}
+
 
 @login_required
 def show_text_page():
     """Render extracted text page"""
-    st.title("Extracted Text")
-    
+    display_extracted_content("Extracted Text", "text")
+
+
+@login_required
+def show_tables_page():
+    """Render extracted tables page"""
+    display_extracted_content("Extracted Tables", "tables")
+
+
+@login_required
+def show_images_page():
+    """Render extracted images page"""
+    display_extracted_content("Extracted Images", "images")
+
+
+def display_extracted_content(title, content_type):
+    """Generic function to render extracted content based on type"""
+    st.title(title)
+
     for file_data in st.session_state.extracted_files:
-        with st.expander(f"{file_data['file_name']} - Extracted Text"):
-            st.markdown(file_data["content"])
-            st.download_button(
-                "Download Extracted Text",
-                file_data["content"],
-                file_name=f"{Path(file_data['file_name']).stem}_extracted.md"
-            )
-    
-    if st.session_state.user_role == "advanced":
+        with st.expander(f"{file_data['file_name']} - Extracted {content_type.capitalize()}"):
+            if content_type == "text":
+                st.markdown(file_data["content"])
+                st.download_button(
+                    "Download Extracted Text",
+                    file_data["content"],
+                    file_name=f"{Path(file_data['file_name']).stem}_extracted.md"
+                )
+            elif content_type == "tables":
+                display_table_content(file_data["content"])
+            elif content_type == "images":
+                display_image_content(file_data["content"])
+
+    if st.session_state.user_role == "advanced" and content_type == "text":
         if st.button("Proceed to Analysis", key="to_analysis_btn"):
             st.session_state.stage = "add_instructions"
-            st.experimental_rerun()
+            st.rerun()
+
+
+def display_table_content(table_data):
+    """Displays table content extracted from the file"""
+    for table_info in table_data:
+        if "warning" in table_info:
+            st.warning(table_info["warning"])
+        else:
+            st.write(f"### Table {table_info['table_index']}")
+            st.markdown(f"**Context:** {table_info['context']}")
+            st.write("Parsing Report:")
+            st.json(json.loads(table_info["parsing_report"]))
+            st.dataframe(pd.DataFrame.from_dict(table_info["table_data"]))
+
+
+def display_image_content(image_data):
+    """Displays image content with prompt interaction"""
+    for data in image_data:
+        col1, col2 = st.columns([2, 3])
+        with col1:
+            st.image(data["image_url"], caption=f"Image {data['image_index']}", use_container_width=True)
+        with col2:
+            prompt_key = f"prompt_{data['image_index'] - 1}"
+            prompt = st.text_input(
+                f"Ask a question about Image {data['image_index']}:",
+                key=prompt_key,
+                placeholder="Enter your question here"
+            )
+            if st.button(f"Submit", key=f"submit_{data['image_index'] - 1}"):
+                if prompt:
+                    st.write(summarize_image(data["image_url"], prompt))
+                else:
+                    st.warning("Please enter a question before submitting.")
+
 
 @login_required
 @role_required("advanced")
@@ -524,7 +634,7 @@ def add_instructions_page():
         
         if st.button("Run Analysis", key="run_analysis_btn"):
             st.session_state.stage = "analyze"
-            st.experimental_rerun()
+            st.rerun()
 
 @login_required
 @role_required("advanced")
@@ -682,6 +792,10 @@ def main():
         upload_page()
     elif st.session_state.stage == "show_text":
         show_text_page()
+    elif st.session_state.stage == "show_tables":
+        show_tables_page()
+    elif st.session_state.stage == "show_images":
+        show_images_page()
     elif st.session_state.stage == "add_instructions":
         add_instructions_page()
     elif st.session_state.stage == "analyze":

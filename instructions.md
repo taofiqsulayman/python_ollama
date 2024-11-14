@@ -64,6 +64,12 @@ SECRET_KEY=your-secret-key
 MAX_FILE_SIZE=10485760
 UPLOAD_FOLDER=./uploads
 LOG_LEVEL=DEBUG
+
+#HuggingFace Token
+API_KEY=your-hugging-face-token
+
+#AWS Bucket
+BUCKET_NAME=your-bucket-name
 ```
 
 ## Step 4: Database Initialization
@@ -128,3 +134,28 @@ docker run -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin
 - Create test users and assign roles
 
 8. Update your .env file with the Keycloak settings
+
+# AWS Bucket & HuggingFace Token Generation
+AWS Bucket is used for the storage of extracted images and hugging face allows you to use the Llama model for image inferencing.
+
+## 1. Configure AWS Credentials
+Set up your AWS credentials to allow access to AWS services by using the AWS CLI. 
+
+```bash
+aws configure
+```
+
+This command will prompt you to enter your AWS Access Key, Secret Access Key, region, and output format. For more details, refer to [AWS CLI Configuration](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html).
+
+### 2. Create an S3 Bucket
+Create an S3 bucket to store the extracted images:
+
+1. Go to your [AWS S3 Console](https://s3.console.aws.amazon.com/s3).
+2. Click on **Create Bucket**.
+3. Name your bucket and set the necessary permissions.
+
+### 3. Set up a Hugging Face API Token
+Generate a read token from your Hugging Face account to allow the project to access models:
+
+1. Go to your [Hugging Face Account Settings](https://huggingface.co/settings/tokens).
+2. Create a **Read Token** (API_KEY) and note it down for later use.

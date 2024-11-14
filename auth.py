@@ -6,6 +6,9 @@ import requests
 from urllib.parse import urljoin
 import streamlit as st
 from models import User
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class KeycloakAuth:
     def __init__(self):
