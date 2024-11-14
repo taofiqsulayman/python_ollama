@@ -14,9 +14,9 @@ from io import BytesIO
 import logging
 
 from auth import KeycloakAuth, login_required, role_required
-from models import init_db, User, Extraction, Analysis, Project
+from models import init_db, User, Extraction, Analysis, Project, Conversation
 from utils import process_files
-from ollama_setup import run_inference_on_document
+from ollama_setup import run_inference_on_document, chat_with_document
 import time
 
 from collections import Counter
@@ -227,9 +227,9 @@ def render_sidebar():
         
         st.markdown("---")
         st.markdown("### Navigation")
-        stages = ["projects", "upload", "show_text"]
-        if st.session_state.get("user_role") == "advanced":
-            stages.extend(["add_instructions", "analyze"])
+        stages = ["projects", "upload", "show_text", "add_instructions", "analyze", "chat"]
+        # if st.session_state.get("user_role") == "advanced":
+        #     stages.extend(["add_instructions", "analyze"])
         
         for stage in stages:
             if st.button(stage.replace("_", " ").title(), key=f"nav_{stage}"):
@@ -500,7 +500,7 @@ def show_text_page():
             st.experimental_rerun()
 
 @login_required
-@role_required("advanced")
+# @role_required("advanced")
 def add_instructions_page():
     """Render instructions page"""
     st.title("Analysis Instructions")
@@ -530,7 +530,7 @@ def add_instructions_page():
             st.experimental_rerun()
 
 @login_required
-@role_required("advanced")
+# @role_required("advanced")
 def analyze_page():
     """Render analysis page with normalized data handling"""
     st.title("Analysis Results")
@@ -672,6 +672,55 @@ def analyze_page():
     finally:
         session.close()
 
+def chat_page():
+    """Render chat page for interacting with documents"""
+    st.title("Chat with Document")
+    
+    if "current_project_id" not in st.session_state:
+        st.session_state.stage = "projects"
+        st.experimental_rerun()
+    
+    session = db_session()
+    try:
+        # Fetch extracted files for the current project
+        extractions = session.query(Extraction).filter_by(project_id=st.session_state.current_project_id).all()
+        
+        if not extractions:
+            st.warning("No extracted files found for this project.")
+            return
+        
+        # Select a document to chat with
+        document_options = {extraction.file_name: extraction.id for extraction in extractions}
+        selected_document = st.selectbox("Select Document", list(document_options.keys()))
+        document_id = document_options[selected_document]
+        document_content = session.query(Extraction).filter_by(id=document_id).first().content
+        
+        # Display conversation history
+        conversation_history = session.query(Conversation).filter_by(document_id=document_id).order_by(Conversation.timestamp).all()
+        for convo in conversation_history:
+            st.markdown(f"**User:** {convo.user_input}")
+            st.markdown(f"**Response:** {convo.response}")
+        
+        # User input for chat
+        user_input = st.text_input("Your message")
+        if st.button("Send"):
+            response = chat_with_document(document_content, user_input, conversation_history)
+            
+            # Save conversation to database
+            new_convo = Conversation(
+                user_id=st.session_state.user_id,
+                project_id=st.session_state.current_project_id,
+                document_id=document_id,
+                user_input=user_input,
+                response=response
+            )
+            session.add(new_convo)
+            session.commit()
+            
+            # Refresh the page to display the new conversation
+            st.experimental_rerun()
+    finally:
+        session.close()
 
 # Main app routing
 def main():
@@ -689,6 +738,8 @@ def main():
         add_instructions_page()
     elif st.session_state.stage == "analyze":
         analyze_page()
+    elif st.session_state.stage == "chat":
+        chat_page()
 
 if __name__ == "__main__":
     main()

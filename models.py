@@ -71,6 +71,21 @@ analysis_extraction = Table(
     Column('extraction_id', Integer, ForeignKey('extractions.id'))
 )
 
+class Conversation(Base):
+    __tablename__ = 'conversations'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, ForeignKey('users.id'))
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    document_id = Column(Integer, ForeignKey('extractions.id'))
+    user_input = Column(String, nullable=False)
+    response = Column(String, nullable=False)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User")
+    project = relationship("Project")
+    document = relationship("Extraction")
+
 def init_db(database_url: str):
     if not database_url:
         raise ValueError("Database URL must be provided")

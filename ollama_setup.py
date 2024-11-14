@@ -50,4 +50,18 @@ def run_inference_on_document(data: str, instructions: list):
     refined_response = extract_json_from_response(response)
     return refined_response
 
+def chat_with_document(document_content: str, user_input: str, conversation_history: list):
+    prompt = f"""You are a professional Data Analyst. Here is the document content: {document_content}
+    Here is the conversation history: {conversation_history}
+    User: {user_input}
+    Please respond accordingly.
+    """
+
+    response = ollama.generate(
+        model="llama3.2",
+        prompt=prompt,
+        stream=False
+    )
+    return response.get("response", "").strip()
+
 
