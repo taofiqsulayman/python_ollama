@@ -207,69 +207,128 @@ def get_user_projects(session: Session, user_id: str) -> List[Project]:
 
 def create_project_zip(project: Project) -> BytesIO:
     """Create a ZIP file containing all project files and their analyses"""
+    session = db_session()
     zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        # Save extractions
-        for extraction in project.extractions:
-            file_name = f"extractions/{extraction.file_name}_content.txt"
-            zip_file.writestr(file_name, extraction.content)
-        
-        # Save analyses
-        for analysis in project.analyses:
-            # Save instructions
-            if analysis.instructions:
-                file_name = f"analyses/analysis_{analysis.id}/instructions.json"
-                zip_file.writestr(file_name, json.dumps(analysis.instructions, indent=2))
+    try:
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Save extractions
+            for extraction in project.extractions:
+                file_name = f"extractions/{extraction.file_name}_content.txt"
+                zip_file.writestr(file_name, extraction.content)
             
-            # Save results
-            if analysis.results:
-                file_name = f"analyses/analysis_{analysis.id}/results.json"
-                zip_file.writestr(file_name, json.dumps(analysis.results, indent=2))
+            # Save analyses
+            for analysis in project.analyses:
+                # Save instructions
+                if analysis.instructions:
+                    file_name = f"analyses/analysis_{analysis.id}/instructions.json"
+                    zip_file.writestr(file_name, json.dumps(analysis.instructions, indent=2))
                 
-                # If it's a batch analysis, also save as CSV
-                if analysis.analysis_type == "batch" and "batch_results" in analysis.results:
-                    results_df = pd.DataFrame([
-                        {'File': res['file_name'], **res['results']}
-                        for res in analysis.results['batch_results']
-                    ])
-                    file_name = f"analyses/analysis_{analysis.id}/results.csv"
-                    zip_file.writestr(file_name, results_df.to_csv(index=False))
-    
-    zip_buffer.seek(0)
-    return zip_buffer
+                # Save results
+                if analysis.results:
+                    file_name = f"analyses/analysis_{analysis.id}/results.json"
+                    zip_file.writestr(file_name, json.dumps(analysis.results, indent=2))
+                    
+                    # If it's a batch analysis, also save as CSV
+                    if analysis.analysis_type == "batch" and "batch_results" in analysis.results:
+                        results_df = pd.DataFrame([
+                            {'File': res['file_name'], **res['results']}
+                            for res in analysis.results['batch_results']
+                        ])
+                        file_name = f"analyses/analysis_{analysis.id}/results.csv"
+                        zip_file.writestr(file_name, results_df.to_csv(index=False))
+            
+            # Save conversations
+            conversations = session.query(Conversation).filter_by(project_id=project.id).all()
+            if conversations:
+                conversations_data = [{
+                    'id': conv.id,
+                    'document': conv.document.file_name,
+                    'user_input': conv.user_input,
+                    'response': conv.response,
+                    'timestamp': conv.timestamp.isoformat(),
+                    'history': conv.history
+                } for conv in conversations]
+                zip_file.writestr('conversations/chat_history.json', 
+                                json.dumps(conversations_data, indent=2))
+
+            # Save image inferencing history
+            image_inferences = session.query(ImageInferencingHistory).filter_by(project_id=project.id).all()
+            if image_inferences:
+                inferences_data = [{
+                    'id': inf.id,
+                    'file': inf.file,
+                    'history': inf.history,
+                    'timestamp': inf.timestamp.isoformat()
+                } for inf in image_inferences]
+                zip_file.writestr('image_inferences/history.json',
+                                json.dumps(inferences_data, indent=2))
+        
+        zip_buffer.seek(0)
+        return zip_buffer
+    finally:
+        session.close()
 
 def create_project_json(project: Project) -> dict:
     """Create a JSON representation of the entire project"""
-    return {
-        "project_info": {
-            "id": project.id,
-            "name": project.name,
-            "description": project.description,
-            "created_at": project.created_at.isoformat(),
-            "status": project.status
-        },
-        "extractions": [
-            {
-                "id": extraction.id,
-                "file_name": extraction.file_name,
-                "content": extraction.content,
-                "created_at": extraction.created_at.isoformat(),
-                "status": extraction.processing_status
-            }
-            for extraction in project.extractions
-        ],
-        "analyses": [
-            {
-                "id": analysis.id,
-                "instructions": analysis.instructions,
-                "results": analysis.results,
-                "created_at": analysis.created_at.isoformat(),
-                "status": analysis.status,
-                "type": analysis.analysis_type
-            }
-            for analysis in project.analyses
-        ]
-    }
+    session = db_session()
+    try:
+        conversations = session.query(Conversation).filter_by(project_id=project.id).all()
+        image_inferences = session.query(ImageInferencingHistory).filter_by(project_id=project.id).all()
+        
+        return {
+            "project_info": {
+                "id": project.id,
+                "name": project.name,
+                "description": project.description,
+                "created_at": project.created_at.isoformat(),
+                "status": project.status
+            },
+            "extractions": [
+                {
+                    "id": extraction.id,
+                    "file_name": extraction.file_name,
+                    "content": extraction.content,
+                    "images": extraction.images,
+                    "tables": extraction.tables,
+                    "created_at": extraction.created_at.isoformat(),
+                    "status": extraction.processing_status
+                }
+                for extraction in project.extractions
+            ],
+            "analyses": [
+                {
+                    "id": analysis.id,
+                    "instructions": analysis.instructions,
+                    "results": analysis.results,
+                    "created_at": analysis.created_at.isoformat(),
+                    "status": analysis.status,
+                    "type": analysis.analysis_type
+                }
+                for analysis in project.analyses
+            ],
+            "conversations": [
+                {
+                    "id": conv.id,
+                    "document": conv.document.file_name,
+                    "user_input": conv.user_input,
+                    "response": conv.response,
+                    "timestamp": conv.timestamp.isoformat(),
+                    "history": conv.history
+                }
+                for conv in conversations
+            ],
+            "image_inferences": [
+                {
+                    "id": inf.id,
+                    "file": inf.file,
+                    "history": inf.history,
+                    "timestamp": inf.timestamp.isoformat()
+                }
+                for inf in image_inferences
+            ]
+        }
+    finally:
+        session.close()
 
 # UI Components
 def render_sidebar():
@@ -301,31 +360,43 @@ def render_sidebar():
 def login_page():
     """Render login page"""
     st.title("Login")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-        
-        if submitted and username and password:
-            token_response = keycloak_auth.get_token(username, password)
-            if token_response:
-                token = token_response['access_token']
-                user_info = keycloak_auth.verify_token(token)
-                
-                if user_info:
-                    reset_session_state()  # Reset session state on sign in
-                    st.session_state.update({
-                        "token": token,
-                        "user_id": user_info['sub'],
-                        "username": user_info['preferred_username'],
-                        "user_role": user_info.get('role', 'basic'),
-                        "stage": "projects"
-                    })
-                    st.rerun()
+    session = db_session()
+    try:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login")
+            
+            if submitted and username and password:
+                token_response = keycloak_auth.get_token(username, password)
+                if token_response:
+                    token = token_response['access_token']
+                    user_info = keycloak_auth.verify_token(token)
+                    
+                    if user_info:
+                        # Check if user exists, create if not
+                        user = get_or_create_user(
+                            session,
+                            user_info['sub'],
+                            user_info['preferred_username'],
+                            user_info.get('role', 'basic')
+                        )
+                        
+                        reset_session_state()  # Reset session state on sign in
+                        st.session_state.update({
+                            "token": token,
+                            "user_id": user.id,
+                            "username": user.username,
+                            "user_role": user.role,
+                            "stage": "projects"
+                        })
+                        st.rerun()
+                    else:
+                        st.error("Invalid token")
                 else:
-                    st.error("Invalid token")
-            else:
-                st.error("Invalid credentials")
+                    st.error("Invalid credentials")
+    finally:
+        session.close()
 
 @login_required
 def project_page():
@@ -339,7 +410,7 @@ def project_page():
         
         # Display metrics
         st.markdown("## Overview")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.metric("Total Projects", len(projects))
         with col2:
@@ -351,6 +422,9 @@ def project_page():
         with col4:
             total_conversations = sum(session.query(Conversation).filter_by(project_id=project.id).count() for project in projects)
             st.metric("Total Conversations", total_conversations)
+        with col5:
+            total_image_inferences = sum(session.query(ImageInferencingHistory).filter_by(project_id=project.id).count() for project in projects)
+            st.metric("Total Image Inferences", total_image_inferences)
         
         # Create Project section
         with st.expander("Create New Project"):
@@ -632,11 +706,13 @@ def display_extracted_content(title, content_type):
                 display_table_content(file_data["content"])
             elif content_type == "images":
                 display_image_content(file_data["content"])
-
-    if st.session_state.user_role == "advanced" and content_type == "text":
-        if st.button("Proceed to Analysis", key="to_analysis_btn"):
-            st.session_state.stage = "add_instructions"
-            st.rerun()
+                
+             
+    # LET'S LEAVE THIS OUT FOR NOW
+    # if st.session_state.user_role == "advanced" and content_type == "text":
+    #     if st.button("Proceed to Analysis", key="to_analysis_btn"):
+    #         st.session_state.stage = "add_instructions"
+    #         st.rerun()
 
 
 def display_table_content(table_data):
