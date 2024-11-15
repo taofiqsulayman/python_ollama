@@ -9,7 +9,7 @@ from sqlalchemy import desc
 import json
 import zipfile
 from io import BytesIO
-from auth import login_required, role_required
+from auth import login_required, role_required  # noqa: F401
 from models import init_db, User, Extraction, Analysis, Project, Conversation, ImageInferencingHistory 
 from ollama_setup import run_inference_on_document, summarize_image, chat_with_document
 import time
@@ -22,7 +22,7 @@ from utils.result_handler import (construct_tables_content, construct_images_con
 from dotenv import load_dotenv
 
 # this is important to be able to nest expanders for a cleaner UI
-import streamlit_nested_layout      # DO NOT REMOVE
+import streamlit_nested_layout      # DO NOT REMOVE  # noqa: F401
 
 
 load_dotenv()
@@ -127,6 +127,22 @@ def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict
 
 def save_conversation(session: Session, user_id: str, project_id: int, document_id: int, files: list, user_input: str, response: str, history: list) -> Conversation:
     """Save conversation to database"""
+    # Convert SQLAlchemy objects to dictionaries, excluding SQLAlchemy-specific attributes
+    serialized_history = []
+    for convo in history:
+        convo_dict = {
+            'id': convo.id,
+            'user_id': convo.user_id,
+            'project_id': convo.project_id,
+            'document_id': convo.document_id,
+            'user_input': convo.user_input,
+            'response': convo.response,
+            'timestamp': convo.timestamp.isoformat() if convo.timestamp else None,
+            'files': convo.files,
+            'history': None  # Avoid recursive history
+        }
+        serialized_history.append(convo_dict)
+
     conversation = Conversation(
         user_id=user_id,
         project_id=project_id,
@@ -134,7 +150,7 @@ def save_conversation(session: Session, user_id: str, project_id: int, document_
         files=files,
         user_input=user_input,
         response=response,
-        history=history,
+        history=serialized_history,
         timestamp=datetime.utcnow()
     )
     session.add(conversation)
