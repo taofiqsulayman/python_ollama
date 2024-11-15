@@ -159,11 +159,22 @@ def save_conversation(session: Session, user_id: str, project_id: int, document_
 
 def save_image_inferencing_history(session: Session, user_id: str, project_id: int, file: str, history: list) -> ImageInferencingHistory:
     """Save image inferencing history to database"""
+    # Convert history objects to dictionaries, excluding SQLAlchemy-specific attributes
+    serialized_history = []
+    for item in history:
+        item_dict = {
+            'prompt': item.get('prompt'),
+            'response': item.get('response'),
+            'timestamp': item.get('timestamp').isoformat() if item.get('timestamp') else None,
+            'image_url': item.get('image_url')
+        }
+        serialized_history.append(item_dict)
+
     image_inferencing_history = ImageInferencingHistory(
         user_id=user_id,
         project_id=project_id,
         file=file,
-        history=history,
+        history=serialized_history,
         timestamp=datetime.utcnow()
     )
     session.add(image_inferencing_history)
