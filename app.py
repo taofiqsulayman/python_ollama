@@ -399,7 +399,7 @@ def login_page():
     finally:
         session.close()
 
-@login_required
+# @login_required
 def project_page():
     """Render project page with project creation and history"""
     st.title("Projects")
@@ -569,7 +569,7 @@ def project_page():
     finally:
         session.close()
 
-@login_required
+# @login_required
 def upload_page():
     """Render file upload page with session handling"""
     st.title("Upload Files")
@@ -672,19 +672,19 @@ def save_extraction_content(uploaded_file, content, category):
     return {"file_name": uploaded_file.name, "content": content, "extraction_id": extraction.id}
 
 
-@login_required
+# @login_required
 def show_text_page():
     """Render extracted text page"""
     display_extracted_content("Extracted Text", "text")
 
 
-@login_required
+# @login_required
 def show_tables_page():
     """Render extracted tables page"""
     display_extracted_content("Extracted Tables", "tables")
 
 
-@login_required
+# @login_required
 def show_images_page():
     """Render extracted images page"""
     display_extracted_content("Extracted Images", "images")
@@ -749,7 +749,7 @@ def display_image_content(image_data):
                     st.warning("Please enter a question before submitting.")
 
 
-@login_required
+# @login_required
 # @role_required("advanced")
 def add_instructions_page():
     """Render instructions page"""
@@ -779,7 +779,7 @@ def add_instructions_page():
             st.session_state.stage = "analyze"
             st.rerun()
 
-@login_required
+# @login_required
 # @role_required("advanced")
 def analyze_page():
     """Render analysis page with normalized data handling"""
@@ -926,7 +926,7 @@ def analyze_page():
         session.close()
         
         
-@login_required
+# @login_required
 def chat_page():
     """Render chat page for interacting with documents"""
     st.title("Chat with Document")
