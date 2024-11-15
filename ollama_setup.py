@@ -44,12 +44,20 @@ def run_inference_on_document(data: str, instructions: list):
     The document is as follows: {data}
     """
 
-    response = ollama.generate(
-        model="llama3.2",
-        prompt=prompt,
-        format="json", 
-        stream=False
+    client = InferenceClient(api_key=os.getenv("API_KEY"))
+
+    response = client.chat_completion(
+        model="meta-llama/Llama-3.2-3B-Instruct",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        max_tokens=500,
+        stream=False,
     )
+
     refined_response = extract_json_from_response(response)
     return refined_response
 
@@ -89,9 +97,18 @@ def chat_with_document(document_content: str, user_input: str, conversation_hist
     Please respond accordingly.
     """
 
-    response = ollama.generate(
-        model="llama3.2",
-        prompt=prompt,
-        stream=False
+    client = InferenceClient(api_key=os.getenv("API_KEY"))
+
+    response = client.chat_completion(
+        model="meta-llama/Llama-3.2-3B-Instruct",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        max_tokens=500,
+        stream=False,
     )
-    return response.get("response", "").strip()
+
+    return response.choices[0].message.content.strip() if response.choices else ""
