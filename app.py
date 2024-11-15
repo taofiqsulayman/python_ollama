@@ -213,8 +213,9 @@ def create_project_zip(project: Project) -> BytesIO:
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             # Save extractions
             for extraction in project.extractions:
-                file_name = f"extractions/{extraction.file_name}_content.txt"
-                zip_file.writestr(file_name, extraction.content)
+                if extraction.content:  # Ensure content is not None
+                    file_name = f"extractions/{extraction.file_name}_content.txt"
+                    zip_file.writestr(file_name, extraction.content)
             
             # Save analyses
             for analysis in project.analyses:
@@ -795,6 +796,8 @@ def analyze_page():
                     file_data["content"],
                     st.session_state.instructions
                 )
+                
+                st.markdown(response)
                 
                 # Normalize the response data
                 normalized_response = {}
