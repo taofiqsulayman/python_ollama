@@ -42,6 +42,8 @@ class Extraction(Base):
     user_id = Column(String, ForeignKey('users.id'))
     file_name = Column(String, nullable=False)
     content = Column(String)
+    images = Column(JSON)  # New field for image URLs
+    tables = Column(JSON)  # New field for tables
     file_hash = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     processing_status = Column(String)
@@ -57,6 +59,7 @@ class Analysis(Base):
     user_id = Column(String, ForeignKey('users.id'))
     instructions = Column(JSON)
     results = Column(JSON)
+    files = Column(JSON)  # New field for files involved in the analysis
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String)
     analysis_type = Column(String)  # 'single' or 'batch'
@@ -78,13 +81,28 @@ class Conversation(Base):
     user_id = Column(String, ForeignKey('users.id'))
     project_id = Column(Integer, ForeignKey('projects.id'))
     document_id = Column(Integer, ForeignKey('extractions.id'))
+    files = Column(JSON)  # New field for files involved in the chat
     user_input = Column(String, nullable=False)
     response = Column(String, nullable=False)
+    history = Column(JSON)  # New field for conversation history
     timestamp = Column(DateTime, default=datetime.utcnow)
     
     user = relationship("User")
     project = relationship("Project")
     document = relationship("Extraction")
+
+class ImageInferencingHistory(Base):
+    __tablename__ = 'image_inferencing_history'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, ForeignKey('users.id'))
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    file = Column(String, nullable=False)  # New field for the file involved in the chat
+    history = Column(JSON)  # New field for conversation history
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User")
+    project = relationship("Project")
 
 def init_db(database_url: str):
     if not database_url:

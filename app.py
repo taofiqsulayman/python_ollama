@@ -10,7 +10,7 @@ import json
 import zipfile
 from io import BytesIO
 from auth import login_required, role_required
-from models import init_db, User, Extraction, Analysis, Project, Conversation
+from models import init_db, User, Extraction, Analysis, Project, Conversation, ImageInferencingHistory 
 from ollama_setup import run_inference_on_document, summarize_image, chat_with_document
 import time
 import uuid
@@ -83,13 +83,15 @@ def get_or_create_user(session: Session, user_id: str, username: str, role: str)
         session.commit()
     return user
 
-def save_extraction(session: Session, user_id: str, file_name: str, content: str) -> Extraction:
+def save_extraction(session: Session, user_id: str, file_name: str, content: str, images: list = None, tables: list = None) -> Extraction:
     """Save extracted content to database with status"""
     extraction = Extraction(
         user_id=user_id,
         project_id=st.session_state.current_project_id,
         file_name=file_name,
         content=content,
+        images=images,
+        tables=tables,
         processing_status="completed",
         created_at=datetime.utcnow()
     )
@@ -97,7 +99,7 @@ def save_extraction(session: Session, user_id: str, file_name: str, content: str
     session.commit()
     return extraction
 
-def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict[str, Any]], instructions: List[Dict[str, Any]]) -> Analysis:
+def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict[str, Any]], instructions: List[Dict[str, Any]], files: List[str]) -> Analysis:
     """Save a batch of analysis results"""
     batch_analysis = Analysis(
         project_id=st.session_state.current_project_id,
@@ -110,6 +112,7 @@ def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict
                 'timestamp': datetime.utcnow().isoformat(),
             }
         },
+        files=files,
         status="completed",
         analysis_type="batch"
     )
@@ -121,6 +124,35 @@ def save_batch_analysis(session: Session, user_id: str, analyses_data: List[Dict
     session.add(batch_analysis)
     session.commit()
     return batch_analysis
+
+def save_conversation(session: Session, user_id: str, project_id: int, document_id: int, files: list, user_input: str, response: str, history: list) -> Conversation:
+    """Save conversation to database"""
+    conversation = Conversation(
+        user_id=user_id,
+        project_id=project_id,
+        document_id=document_id,
+        files=files,
+        user_input=user_input,
+        response=response,
+        history=history,
+        timestamp=datetime.utcnow()
+    )
+    session.add(conversation)
+    session.commit()
+    return conversation
+
+def save_image_inferencing_history(session: Session, user_id: str, project_id: int, file: str, history: list) -> ImageInferencingHistory:
+    """Save image inferencing history to database"""
+    image_inferencing_history = ImageInferencingHistory(
+        user_id=user_id,
+        project_id=project_id,
+        file=file,
+        history=history,
+        timestamp=datetime.utcnow()
+    )
+    session.add(image_inferencing_history)
+    session.commit()
+    return image_inferencing_history
 
 def generate_session_name() -> str:
     """Generate a unique session name based on timestamp"""
@@ -230,7 +262,7 @@ def render_sidebar():
         
         st.markdown("---")
         st.markdown("### Navigation")
-        stages = ["projects", "upload", "show_text", "add_instructions", "analyze", "chat"]
+        stages = ["projects", "upload", "show_text", "show_tables", "show_images", "add_instructions", "analyze", "chat"]
         # if st.session_state.get("user_role") == "advanced":
         #     stages.extend(["add_instructions", "analyze", "chat"])
         
@@ -528,7 +560,9 @@ def save_extraction_content(uploaded_file, content, category):
         user_id=st.session_state.user_id,
         project_id=st.session_state.current_project_id,
         file_name=uploaded_file.name,
-        content=json.dumps(content) if category != "Images" else "construct_images_content(result)", #update this to appropriate database content for images
+        content=json.dumps(content) if category != "Images" else None,
+        images=content if category == "Images" else None,
+        tables=content if category == "Tables" else None,
         processing_status="completed"
     )
     session.add(extraction)
@@ -692,7 +726,8 @@ def analyze_page():
                 session,
                 st.session_state.user_id,
                 analyses_data,
-                st.session_state.instructions
+                st.session_state.instructions,
+                [file_data["file_name"] for file_data in st.session_state.extracted_files]
             )
         
         # Create DataFrame with normalized data
@@ -846,14 +881,16 @@ def chat_page():
             
             # Save conversation to database
             for doc_id in document_ids:
-                new_convo = Conversation(
-                    user_id=st.session_state.user_id,
-                    project_id=st.session_state.current_project_id,
-                    document_id=doc_id,
-                    user_input=user_input,
-                    response=response
+                new_convo = save_conversation(
+                    session,
+                    st.session_state.user_id,
+                    st.session_state.current_project_id,
+                    doc_id,
+                    document_ids,
+                    user_input,
+                    response,
+                    conversation_history
                 )
-                session.add(new_convo)
             session.commit()
             
             # Clear user input box
