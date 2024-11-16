@@ -316,32 +316,38 @@ async def add_chat_message(
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
+    # Get chat history and convert to format expected by chat models
+    history = db.query(ChatMessage).filter_by(session_id=session_id).all()
+    formatted_history = [
+        {
+            "role": msg.role,
+            "content": msg.content,
+            "timestamp": msg.timestamp.isoformat(),
+            **(msg.additional_data or {})
+        }
+        for msg in history
+    ]
+
     # Handle different session types
     if session.session_type == "document":
         documents = db.query(Extraction).filter(
             Extraction.id.in_(session.files)
         ).all()
         
-        # Get chat history
-        history = db.query(ChatMessage).filter_by(session_id=session_id).all()
-        
-        # Get response from model
         response = chat_with_document(
             "\n\n".join(doc.content for doc in documents),
             message.content,
-            history
+            formatted_history
         )
     elif session.session_type == "image":
-        if not message.additional_data or "image" not in message.additional_data:  # Updated from metadata
+        if not message.additional_data or "image" not in message.additional_data:
             raise HTTPException(status_code=400, detail="Image data required for image chat")
         
-        image_bytes = base64.b64decode(message.additional_data["image"])  # Updated from metadata
-        history = db.query(ChatMessage).filter_by(session_id=session_id).all()
-        
+        image_bytes = base64.b64decode(message.additional_data["image"])
         response = chat_with_image(
             image_bytes=image_bytes,
             prompt=message.content,
-            conversation_history=history
+            conversation_history=formatted_history
         )
     else:
         raise HTTPException(status_code=400, detail="Invalid session type")
@@ -352,7 +358,7 @@ async def add_chat_message(
             session_id=session_id,
             role="user",
             content=message.content,
-            additional_data=message.additional_data  # Updated from metadata
+            additional_data=message.additional_data
         ),
         ChatMessage(
             session_id=session_id,

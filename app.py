@@ -5,6 +5,7 @@ import json
 from PIL import Image
 import base64
 import pandas as pd
+import time
 
 # Page config
 st.set_page_config(
@@ -27,6 +28,9 @@ def init_session_state():
         "current_chat_name": None,  # Name of current chat session
         "current_chat_files": [],  # Files in current chat session
         "current_chat_type": None,  # 'document' or 'image'
+        "message_history": {},  # Store message history by session ID
+        "last_message_time": {},  # Track last message time for each session
+        "auto_refresh": True,  # Toggle for auto-refresh
     }
     
     # Initialize each key if it doesn't exist
@@ -221,6 +225,73 @@ def analyze_page():
                 else:
                     st.error(f"Error analyzing documents: {response.json()['detail']}")
 
+def render_chat_interface(session_id: int, session_type: str = "document", current_image=None):
+    """Shared chat interface component for both document and image chat"""
+    messages_container = st.container()
+    
+    # Auto-refresh toggle
+    col1, col2 = st.columns([4, 1])
+    with col2:
+        auto_refresh = st.toggle("Auto-refresh", value=st.session_state.auto_refresh)
+        st.session_state.auto_refresh = auto_refresh
+
+    # Create a container for messages that will be updated
+    with messages_container:
+        if auto_refresh:
+            messages_response = requests.get(
+                f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages"
+            )
+            
+            if messages_response.status_code == 200:
+                messages = messages_response.json()
+                current_messages = st.session_state.message_history.get(session_id, [])
+                if len(messages) != len(current_messages):
+                    st.session_state.message_history[session_id] = messages
+                
+                for msg in messages:
+                    with st.chat_message(msg["role"]):
+                        st.write(msg["content"])
+                        st.caption(f":clock2: {msg.get('timestamp', 'No timestamp')}")
+
+    # Input area at the bottom
+    st.markdown("---")
+    input_container = st.container()
+    
+    with input_container:
+        if prompt := st.chat_input("Type your message..."):
+            with st.spinner("Processing..."):
+                # Prepare message data based on session type
+                if session_type == "image" and current_image:
+                    image_bytes = current_image.getvalue()
+                    base64_image = base64.b64encode(image_bytes).decode()
+                    message_data = {
+                        "content": prompt,
+                        "additional_data": {"image": base64_image}
+                    }
+                else:
+                    message_data = {
+                        "content": prompt,
+                        "additional_data": None
+                    }
+                
+                # Show user message immediately
+                with st.chat_message("user"):
+                    st.write(prompt)
+                    st.caption(":clock2: Just now")
+                
+                # Send message to API
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages",
+                    json=message_data
+                )
+                
+                if response.status_code == 200:
+                    with st.chat_message("assistant"):
+                        st.write(response.json()["response"])
+                        st.caption(":clock2: Just now")
+                else:
+                    st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
+
 def chat_page():
     """Render chat page with session management"""
     st.title("Chat with Documents")
@@ -293,37 +364,10 @@ def chat_page():
             if selected_session:
                 st.session_state.current_chat_session = selected_session
 
-    # Chat interface
+    # Render chat interface if session is selected
     if st.session_state.current_chat_session:
-        # Display chat messages
-        messages_response = requests.get(
-            f"{API_BASE_URL}/api/v1/chat-sessions/{st.session_state.current_chat_session}/messages"
-        )
-        if messages_response.status_code == 200:
-            for msg in messages_response.json():
-                with st.chat_message(msg["role"]):
-                    st.write(msg["content"])
-
-        # Chat input
-        if prompt := st.chat_input("Your message"):
-            message_data = {
-                "content": prompt,
-                "additional_data": None
-            }
-            
-            with st.chat_message("user"):
-                st.write(prompt)
-            
-            response = requests.post(
-                f"{API_BASE_URL}/api/v1/chat-sessions/{st.session_state.current_chat_session}/messages",
-                json=message_data
-            )
-            
-            if response.status_code == 200:
-                with st.chat_message("assistant"):
-                    st.write(response.json()["response"])
-            else:
-                st.error(f"Error: {response.json()['detail']}")
+        st.markdown("---")
+        render_chat_interface(st.session_state.current_chat_session, "document")
 
 def chat_with_image_page():
     """Render image chat page"""
@@ -401,37 +445,12 @@ def chat_with_image_page():
                 mime=f"image/{uploaded_file.type.split('/')[-1]}"
             )
         
-        # Display chat history
-        messages_response = requests.get(
-            f"{API_BASE_URL}/api/v1/chat-sessions/{st.session_state.current_chat_session}/messages"
+        st.markdown("---")
+        render_chat_interface(
+            st.session_state.current_chat_session,
+            session_type="image",
+            current_image=uploaded_file
         )
-        if messages_response.status_code == 200:
-            for msg in messages_response.json():
-                with st.chat_message(msg["role"]):
-                    st.write(msg["content"])
-
-        if prompt := st.chat_input("Ask about the image"):
-            image_bytes = uploaded_file.getvalue()
-            base64_image = base64.b64encode(image_bytes).decode()
-            
-            message_data = {
-                "content": prompt,
-                "additional_data": {"image": base64_image}
-            }
-            
-            with st.chat_message("user"):
-                st.write(prompt)
-            
-            response = requests.post(
-                f"{API_BASE_URL}/api/v1/chat-sessions/{st.session_state.current_chat_session}/messages",
-                json=message_data
-            )
-            
-            if response.status_code == 200:
-                with st.chat_message("assistant"):
-                    st.write(response.json()["response"])
-            else:
-                st.error(f"Error: {response.json()['detail']}")
 
 def main():
     render_sidebar()
