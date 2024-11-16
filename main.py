@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Optional, Dict
 from pydantic import BaseModel
 import base64
+import logging
 
 from models import ChatMessage, ChatSession, init_db, User, Project, Extraction, Analysis
 from utils import process_files
@@ -148,15 +149,24 @@ async def create_project(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new project"""
-    db_project = Project(
-        user_id=current_user.id,
-        name=project.name,
-        description=project.description
-    )
-    db.add(db_project)
-    db.commit()
-    db.refresh(db_project)
-    return db_project
+    try:
+        logging.info(f"Creating project: {project.dict()}")
+        logging.info(f"Current user: {current_user.id}")
+        
+        db_project = Project(
+            user_id=current_user.id,
+            name=project.name,
+            description=project.description
+        )
+        db.add(db_project)
+        db.commit()
+        db.refresh(db_project)
+        
+        logging.info(f"Project created: {db_project.id}")
+        return db_project
+    except Exception as e:
+        logging.error(f"Error creating project: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/projects", response_model=List[ProjectResponse])
 async def list_projects(

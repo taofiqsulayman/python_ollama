@@ -1,3 +1,4 @@
+from datetime import datetime
 import streamlit as st
 import requests
 import json
@@ -24,7 +25,8 @@ def init_session_state():
             "chat_sessions": {},  # Store chat sessions by project
             "image_chat_history": [],
             "chat_messages": [],  # Add chat messages history
-            "image_chat_messages": []  # Add image chat messages history
+            "image_chat_messages": [],  # Add image chat messages history
+            "instructions": [],  # Move instructions to top level
         })
 
 init_session_state()
@@ -37,7 +39,7 @@ def render_sidebar():
     with st.sidebar:
         st.title("File Processor")
         st.markdown("### Navigation")
-        stages = ["projects", "upload", "add_instructions", "analyze", "chat", "chat_image"]
+        stages = ["projects", "upload", "analyze", "chat", "chat_image"]
         
         for stage in stages:
             if st.button(stage.replace("_", " ").title(), key=f"nav_{stage}"):
@@ -56,8 +58,9 @@ def project_page():
             submitted = st.form_submit_button("Create Project")
             
             if submitted and name:
+                # Fix: Update endpoint to match backend
                 response = requests.post(
-                    f"{API_BASE_URL}/projects/",
+                    f"{API_BASE_URL}/api/v1/projects",  # Changed from /projects/
                     json={"name": name, "description": description}
                 )
                 if response.status_code == 200:
@@ -65,9 +68,11 @@ def project_page():
                     st.session_state.current_project_id = project_data["id"]
                     st.session_state.stage = "upload"
                     st.rerun()
-    
-    # List Projects
-    response = requests.get(f"{API_BASE_URL}/projects/")
+                else:
+                    st.error(f"Error creating project: {response.json().get('detail', 'Unknown error')}")
+
+    # Fix: Update endpoint to match backend
+    response = requests.get(f"{API_BASE_URL}/api/v1/projects")  # Changed from /projects/
     if response.status_code == 200:
         projects = response.json()
         for project in projects:
@@ -86,103 +91,130 @@ def upload_page():
         st.session_state.stage = "projects"
         st.rerun()
 
-    uploaded_file = st.file_uploader("Upload a file", type=["pdf", "docx", "csv"])
-    
-    if uploaded_file:
-        files = {"file": uploaded_file}
-        response = requests.post(
-            f"{API_BASE_URL}/projects/{st.session_state.current_project_id}/documents/",
-            files=files
-        )
-        
-        if response.status_code == 200:
-            st.success("File uploaded successfully!")
-        else:
-            st.error(f"Error uploading file: {response.json()['detail']}")
-
-def add_instructions_page():
-    """Render instructions page"""
-    st.title("Analysis Instructions")
-    
-    if "instructions" not in st.session_state:
-        st.session_state.instructions = []
-    
-    with st.form("instruction_form"):
-        title = st.text_input("Title")
-        data_type = st.selectbox("Data Type", ["string", "number"])
-        description = st.text_area("Description")
-        submitted = st.form_submit_button("Add Instruction")
-        
-        if submitted and title and description:
-            st.session_state.instructions.append({
-                "title": title,
-                "data_type": data_type,
-                "description": description
-            })
-    
-    if st.session_state.instructions:
-        st.markdown("### Current Instructions")
-        for instruction in st.session_state.instructions:
-            with st.expander(instruction["title"]):
-                st.markdown(f"**Description:** {instruction['description']}")
-                st.markdown(f"**Data Type:** {instruction['data_type']}")
-        
-        if st.button("Run Analysis"):
-            st.session_state.stage = "analyze"
-            st.rerun()
-
-def analyze_page():
-    """Render analysis results"""
-    st.title("Analysis Results")
-    
-    if not st.session_state.get("instructions"):
-        st.warning("No analysis instructions found. Please add instructions first.")
-        return
-    
-    # Get project documents
-    response = requests.post(
-        f"{API_BASE_URL}/projects/{st.session_state.current_project_id}/analyze/",
-        json={"instructions": st.session_state.instructions}
+    uploaded_files = st.file_uploader(
+        "Upload files",
+        type=["pdf", "docx", "csv"],
+        accept_multiple_files=True  # Allow multiple file upload
     )
     
-    if response.status_code == 200:
-        results = response.json()["results"]
-        
-        # Create DataFrame from results
-        df_data = []
-        for analysis in results:
-            row = {"File": analysis["file_name"]}
-            row.update(analysis["results"])
-            df_data.append(row)
-        
-        df = pd.DataFrame(df_data)
-        
-        # Display results
+    if uploaded_files:
+        with st.spinner("Uploading files..."):
+            # Create list of tuples for files parameter
+            files = [
+                ("files", (file.name, file.getvalue(), file.type))
+                for file in uploaded_files
+            ]
+            
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/files",
+                    files=files
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    st.success(f"Successfully uploaded {len(result['files'])} files!")
+                    
+                    # Display uploaded files and their content
+                    for file_info in result['files']:
+                        with st.expander(f"📄 {file_info['file_name']}"):
+                            st.write("Content preview:")
+                            st.markdown(file_info['content'][:500] + "..." if len(file_info['content']) > 500 else file_info['content'])
+                else:
+                    st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
+            except Exception as e:
+                st.error(f"Error uploading files: {str(e)}")
+
+def analyze_page():
+    """Combined analysis and instructions page"""
+    st.title("Document Analysis")
+    
+    if "current_project_id" not in st.session_state:
+        st.session_state.stage = "projects"
+        st.rerun()
+
+    # Split the page into two columns
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### Add Instructions")
+        with st.form("instruction_form"):
+            title = st.text_input("Title")
+            data_type = st.selectbox("Data Type", ["string", "number"])
+            description = st.text_area("Description")
+            submitted = st.form_submit_button("Add Instruction")
+            
+            if submitted and title and description:
+                st.session_state.instructions.append({
+                    "title": title,
+                    "data_type": data_type,
+                    "description": description
+                })
+
+        # Show current instructions
+        if st.session_state.instructions:
+            st.markdown("### Current Instructions")
+            for idx, instruction in enumerate(st.session_state.instructions):
+                with st.expander(f"{idx + 1}. {instruction['title']}"):
+                    st.markdown(f"**Description:** {instruction['description']}")
+                    st.markdown(f"**Data Type:** {instruction['data_type']}")
+                    if st.button("Remove", key=f"remove_{idx}"):
+                        st.session_state.instructions.pop(idx)
+                        st.rerun()
+
+    with col2:
         st.markdown("### Analysis Results")
-        st.dataframe(df)
+        if not st.session_state.instructions:
+            st.info("Add instructions on the left to analyze documents")
+            return
         
-        # Download options
-        st.download_button(
-            "Download Results (CSV)",
-            df.to_csv(index=False),
-            file_name="analysis_results.csv",
-            mime="text/csv"
-        )
-        
-        st.download_button(
-            "Download Results (JSON)",
-            json.dumps(results, indent=2),
-            file_name="analysis_results.json",
-            mime="application/json"
-        )
-        
-        # Display summary statistics for numeric columns
-        numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
-        if len(numeric_cols) > 0:
-            st.markdown("### Summary Statistics")
-            st.dataframe(df[numeric_cols].describe())
-    else:
-        st.error(f"Error analyzing documents: {response.json()['detail']}")
+        if st.button("Run Analysis", type="primary"):
+            with st.spinner("Analyzing documents..."):
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/analyze/",
+                    json={"instructions": st.session_state.instructions}
+                )
+                
+                if response.status_code == 200:
+                    results = response.json()["results"]
+                    
+                    # Create DataFrame from results
+                    df_data = []
+                    for analysis in results:
+                        row = {"File": analysis["file_name"]}
+                        row.update(analysis["results"])
+                        df_data.append(row)
+                    
+                    df = pd.DataFrame(df_data)
+                    
+                    # Display results
+                    st.dataframe(df)
+                    
+                    # Download options in columns
+                    dl_col1, dl_col2 = st.columns(2)
+                    with dl_col1:
+                        st.download_button(
+                            "Download CSV",
+                            df.to_csv(index=False),
+                            file_name="analysis_results.csv",
+                            mime="text/csv"
+                        )
+                    
+                    with dl_col2:
+                        st.download_button(
+                            "Download JSON",
+                            json.dumps(results, indent=2),
+                            file_name="analysis_results.json",
+                            mime="application/json"
+                        )
+                    
+                    # Display summary statistics for numeric columns
+                    numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
+                    if len(numeric_cols) > 0:
+                        with st.expander("View Summary Statistics"):
+                            st.dataframe(df[numeric_cols].describe())
+                else:
+                    st.error(f"Error analyzing documents: {response.json()['detail']}")
 
 def chat_page():
     """Render chat page with session management"""
@@ -369,9 +401,7 @@ def main():
         project_page()
     elif st.session_state.stage == "upload":
         upload_page()
-    elif st.session_state.stage == "add_instructions":
-        add_instructions_page()
-    elif st.session_state.stage == "analyze":
+    elif st.session_state.stage == "analyze":  # Single analyze page
         analyze_page()
     elif st.session_state.stage == "chat":
         chat_page()
