@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Start Ollama server
 echo "Starting Ollama server..."
@@ -16,17 +17,17 @@ ollama pull llama3.2-vision
 # Wait for PostgreSQL to be ready
 echo "Waiting for PostgreSQL..."
 while ! pg_isready -h db -p 5432 -U fileprocessor; do
+    echo "PostgreSQL is unavailable - sleeping"
     sleep 1
 done
 
-# Initialize database
-echo "Initializing database..."
-python3 -c "from app.models import init_db; init_db()"
-
-# Start Streamlit application
-echo "Starting Streamlit application..."
-streamlit run app/app.py --server.port=8501 --server.address=0.0.0.0
-
-# Run the fastapi server
+# Start FastAPI server in background
 echo "Starting FastAPI server..."
-fastapi run app/main.py --server.port=8000 --host
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1 &
+
+# Start Streamlit application in foreground
+echo "Starting Streamlit application..."
+streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+
+# Keep container running
+wait -n

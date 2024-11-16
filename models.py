@@ -1,7 +1,11 @@
+import os
 from sqlalchemy import create_engine, Column, Integer, String, JSON, DateTime, ForeignKey, Table, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
+
+from dotenv import load_dotenv
+load_dotenv()
 
 Base = declarative_base()
 
@@ -109,9 +113,13 @@ class ChatMessage(Base):
 # class Conversation
 # class ImageInferencingHistory
 
-def init_db(database_url: str):
+def init_db(database_url: str = None):
+    """Initialize database with URL from environment"""
     if not database_url:
-        raise ValueError("Database URL must be provided")
+        database_url = os.getenv('DATABASE_URL')
+    if not database_url:
+        raise ValueError("Database URL must be provided or set in environment")
+    
     engine = create_engine(database_url)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
