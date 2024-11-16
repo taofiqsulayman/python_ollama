@@ -9,7 +9,7 @@ ollama serve &
 echo "Waiting for Ollama server to start..."
 sleep 5
 
-# Pull required models
+# Pull models at runtime
 echo "Pulling Ollama models..."
 ollama pull llama3.2:3b
 ollama pull llama3.2-vision
