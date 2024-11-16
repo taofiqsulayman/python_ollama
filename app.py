@@ -4,6 +4,7 @@ import json
 from PIL import Image
 import base64
 import pandas as pd
+import time
 
 import streamlit_nested_layout  # noqa: F401
 
@@ -42,6 +43,19 @@ def init_session_state():
 init_session_state()
 
 API_BASE_URL = "http://localhost:8000"
+
+def wait_for_api(url: str, max_retries: int = 5, delay: int = 2):
+    """Wait for API to become available"""
+    for i in range(max_retries):
+        try:
+            response = requests.get(f"{url}/docs")
+            if response.status_code == 200:
+                return True
+        except requests.exceptions.RequestException:
+            if i < max_retries - 1:
+                time.sleep(delay)
+                continue
+    return False
 
 # UI Components
 def render_sidebar():
@@ -288,26 +302,37 @@ def render_chat_interface(session_id: int, session_type: str = "document", curre
                         } if session_type == "image" and current_image else None
                     }
                     
-                    response = requests.post(
-                        f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages",
-                        json=message_data
-                    )
-                    
-                    if response.status_code == 200:
-                        assistant_response = response.json()["response"]
-                        with messages_area:
-                            with st.chat_message("assistant"):
-                                st.markdown(assistant_response)
-                                st.caption(":clock2: Just now")
+                    try:
+                        response = requests.post(
+                            f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages",
+                            json=message_data
+                        )
                         
-                        # Add to history
-                        st.session_state.message_history[session_id].append({
-                            "role": "assistant",
-                            "content": assistant_response,
-                            "timestamp": "Just now"
-                        })
-                    else:
-                        st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
+                        if response.status_code == 200:
+                            try:
+                                response_data = response.json()
+                                assistant_response = response_data["response"]
+                                with messages_area:
+                                    with st.chat_message("assistant"):
+                                        st.markdown(assistant_response)
+                                        st.caption(":clock2: Just now")
+                                
+                                # Add to history
+                                st.session_state.message_history[session_id].append({
+                                    "role": "assistant",
+                                    "content": assistant_response,
+                                    "timestamp": "Just now"
+                                })
+                            except (ValueError, KeyError) as e:
+                                st.error(f"Invalid response format: {str(e)}")
+                        else:
+                            try:
+                                error_detail = response.json().get('detail', 'Unknown error')
+                            except ValueError:
+                                error_detail = response.text or 'Unknown error'
+                            st.error(f"Error {response.status_code}: {error_detail}")
+                    except requests.exceptions.RequestException as e:
+                        st.error(f"Request failed: {str(e)}")
 
             # Clear the processing indicator
             processing_placeholder.empty()
@@ -473,18 +498,29 @@ def chat_with_image_page():
         )
 
 def main():
+    # Wait for API to be available
+    if not wait_for_api(API_BASE_URL):
+        st.error("Cannot connect to API server. Please try again later.")
+        return
+
     render_sidebar()
     
-    if st.session_state.stage == "projects":
-        project_page()
-    elif st.session_state.stage == "upload":
-        upload_page()
-    elif st.session_state.stage == "analyze":  # Single analyze page
-        analyze_page()
-    elif st.session_state.stage == "chat":
-        chat_page()
-    elif st.session_state.stage == "chat_image":
-        chat_with_image_page()
+    # Add error handling around each page render
+    try:
+        if st.session_state.stage == "projects":
+            project_page()
+        elif st.session_state.stage == "upload":
+            upload_page()
+        elif st.session_state.stage == "analyze":
+            analyze_page()
+        elif st.session_state.stage == "chat":
+            chat_page()
+        elif st.session_state.stage == "chat_image":
+            chat_with_image_page()
+    except requests.exceptions.RequestException as e:
+        st.error(f"API Error: {str(e)}")
+    except Exception as e:
+        st.error(f"Unexpected error: {str(e)}")
 
 if __name__ == "__main__":
     main()
