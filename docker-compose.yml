@@ -3,14 +3,15 @@ version: '3.8'
 services:
   app:
     build: .
-    runtime: nvidia  # Enable NVIDIA runtime
+    privileged: true  # Add this for Amazon Linux 2023
     deploy:
       resources:
         reservations:
           devices:
-            - driver: nvidia
+            - capabilities: [gpu]
+              driver: nvidia
               count: all
-              capabilities: [gpu]
+              device_ids: ['0']
     ports:
       - "8000:8000"  # FastAPI
       - "8501:8501"  # Streamlit
@@ -19,8 +20,12 @@ services:
       - PYTHONPATH=/app
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ollama_models:/root/.ollama  # Persist Ollama models
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi  # Map nvidia-smi
+      - /usr/lib64/libnvidia-ml.so:/usr/lib64/libnvidia-ml.so  # Map NVIDIA libraries
+      - /usr/lib64/libnvidia-ml.so.1:/usr/lib64/libnvidia-ml.so.1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
       interval: 30s
