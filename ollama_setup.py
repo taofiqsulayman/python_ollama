@@ -8,23 +8,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# def extract_json_from_response(response):
-#     """Extract JSON from ChatCompletionOutput response"""
-#     try:
-#         # Get content from the first choice's message
-#         if response.choices and len(response.choices) > 0:
-#             content = response.choices[0].message.content
-
-#             # Remove markdown code block indicators if present
-#             json_str = content.replace("```json", "").replace("```", "").strip()
-
-#             return orjson.loads(json_str)
-#     except (AttributeError, orjson.JSONDecodeError) as e:
-#         print(f"Error parsing JSON: {e}")
-#         print(f"Problematic content: {response}")
-#         return {}
-
-
 # def run_inference_on_document(data: str, instructions: list):
 #     seen_titles = set()
 #     unique_instructions = []
@@ -82,6 +65,32 @@ load_dotenv()
 #     )
 
 #     return response.choices[0].message.content.strip() if response.choices else ""
+
+# def summarize_image(image_url: str, prompt: str) -> str:
+#     client = InferenceClient(api_key=os.getenv("API_KEY"))
+
+#     response = client.chat_completion(
+#         model="meta-llama/Llama-3.2-11B-Vision-Instruct",
+#         messages=[
+#             {
+#                 "role": "user",
+#                 "content": [
+#                     {"type": "image_url", "image_url": {"url": image_url}},
+#                     {"type": "text", "text": prompt},
+#                 ],
+#             }
+#         ],
+#         max_tokens=500,
+#         stream=False,
+#     )
+
+#     response_text = ""
+#     if response.choices and len(response.choices) > 0:
+#         response_text = response.choices[0].message.content
+
+#     return response_text.strip()
+
+
 
 def extract_json_from_response(response):
     json_like_str = response.get("response", "").strip()
@@ -149,29 +158,43 @@ def run_inference_on_document(data: str, instructions: list):
     refined_response = extract_json_from_response(response)
     return refined_response
 
+def chat_with_image(image_bytes: bytes, prompt: str, conversation_history: list = None):
+    """Process image and text prompt with Ollama vision model."""
+    system_prompt = {
+        "role": "system",
+        "content": """You are an AI assistant that provides accurate image analysis. 
+        Follow these guidelines:
+        1. Only make statements that you can verify from the image
+        2. If you are unsure about something, explicitly state your uncertainty
+        3. Consider the provided context for better understanding
+        4. Maintain consistency with previous responses
+        5. Focus on factual observations rather than assumptions"""
+    }
+
+    max_history = 5
+    recent_messages = conversation_history[-max_history:] if conversation_history else []
+
+    try:
+        response = ollama.chat(
+            model='llama3.2-vision',
+            messages=[
+                system_prompt,
+                *recent_messages,
+                {
+                    'role': 'user',
+                    'content': prompt,
+                    'images': [image_bytes]
+                }
+            ]
+        )
+        return response['message']['content']
+    except Exception as e:
+        logging.error(f"Error in image chat: {str(e)}")
+        return f"Error processing image: {str(e)}"
 
 
 
-def summarize_image(image_url: str, prompt: str) -> str:
-    client = InferenceClient(api_key=os.getenv("API_KEY"))
 
-    response = client.chat_completion(
-        model="meta-llama/Llama-3.2-11B-Vision-Instruct",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
-        max_tokens=500,
-        stream=False,
-    )
 
-    response_text = ""
-    if response.choices and len(response.choices) > 0:
-        response_text = response.choices[0].message.content
 
-    return response_text.strip()
+

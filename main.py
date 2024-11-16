@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
@@ -6,11 +6,11 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
 import json
+import base64
 
-from models import init_db, User, Project, Extraction, Analysis, Conversation
+from models import ImageInferencingHistory, init_db, User, Project, Extraction, Analysis, Conversation
 from utils import process_files
-from ollama_setup import run_inference_on_document, chat_with_document
-from dev_auth import DevAuth
+from ollama_setup import run_inference_on_document, chat_with_document, chat_with_image
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -91,6 +91,12 @@ class ChatRequest(BaseModel):
 # Add this new model for the analyze request
 class AnalyzeRequest(BaseModel):
     instructions: List[AnalysisInstruction]
+
+# Add this new model for image chat requests
+class ImageChatRequest(BaseModel):
+    message: str
+    image: str  # base64 encoded image
+    project_id: int
 
 # User endpoints
 @app.get("/users/me", response_model=UserResponse)
@@ -243,6 +249,55 @@ async def chat(
     db.commit()
 
     return {"response": response}
+
+# Image chat endpoint
+@app.post("/chat-with-image/")
+async def chat_with_image_endpoint(
+    request: ImageChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        # Decode base64 image
+        image_bytes = base64.b64decode(request.image)
+        
+        # Get conversation history
+        history = db.query(ImageInferencingHistory).filter(
+            ImageInferencingHistory.project_id == request.project_id
+        ).order_by(ImageInferencingHistory.timestamp.desc()).limit(5).all()
+
+        conversation_history = []
+        for h in history:
+            if h.history:
+                conversation_history.extend(h.history)
+
+        # Get response from model
+        response = chat_with_image(
+            image_bytes=image_bytes,
+            prompt=request.message,
+            conversation_history=conversation_history
+        )
+
+        # Save to history
+        history_entry = ImageInferencingHistory(
+            user_id=current_user.id,
+            project_id=request.project_id,
+            file=f"chat_{datetime.utcnow().isoformat()}",
+            history=[*conversation_history, {
+                "role": "user",
+                "content": request.message
+            }, {
+                "role": "assistant",
+                "content": response
+            }]
+        )
+        db.add(history_entry)
+        db.commit()
+
+        return {"response": response}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
