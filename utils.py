@@ -8,6 +8,7 @@ import fitz  # PyMuPDF
 import pymupdf4llm
 from docx import Document
 import tempfile
+from pathlib import Path
 
 os.environ['USE_TORCH'] = '1'
 ocr_model = ocr_predictor(pretrained=True)
@@ -82,16 +83,33 @@ def process_txt_file(file_path):
         text = f.read()
     return text
 
-def process_files(file_path):
-    if file_path.suffix in [".pdf", ".PDF"]:
-        return process_pdf(file_path)
-    elif file_path.suffix in [".csv", ".CSV", ".tsv", ".TSV", ".xlsx", ".XLSX"]:
-        return process_csv_xlsx_tsv(file_path)
-    elif file_path.suffix in [".doc", ".docx"]:
-        return process_word_docs(file_path)
-    elif file_path.suffix in [".txt", ".TXT"]:
-        return process_txt_file(file_path)
-    elif file_path.suffix in [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]:
-        return extract_text_with_ocr(file_path)
-    else:
-        raise ValueError("Unsupported file format. Please use a supported file format.")
+async def process_files(upload_file):
+    """Handle FastAPI UploadFile object"""
+    # Get file extension
+    file_extension = Path(upload_file.filename).suffix.lower()
+    
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+        # Write uploaded file content to temporary file
+        content = await upload_file.read()
+        temp_file.write(content)
+        temp_file.flush()
+        
+        try:
+            # Process the temporary file based on its extension
+            temp_path = Path(temp_file.name)
+            if file_extension in [".pdf", ".PDF"]:
+                return process_pdf(temp_path)
+            elif file_extension in [".csv", ".CSV", ".tsv", ".TSV", ".xlsx", ".XLSX"]:
+                return process_csv_xlsx_tsv(temp_path)
+            elif file_extension in [".doc", ".docx"]:
+                return process_word_docs(temp_path)
+            elif file_extension in [".txt", ".TXT"]:
+                return process_txt_file(temp_path)
+            elif file_extension in [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]:
+                return extract_text_with_ocr(temp_path)
+            else:
+                raise ValueError("Unsupported file format. Please use a supported file format.")
+        finally:
+            # Clean up the temporary file
+            os.unlink(temp_path)

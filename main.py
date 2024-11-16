@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
@@ -12,6 +11,9 @@ from models import init_db, User, Project, Extraction, Analysis, Conversation
 from utils import process_files
 from ollama_setup import run_inference_on_document, chat_with_document
 from dev_auth import DevAuth
+
+from dotenv import load_dotenv
+load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(title="Document Processing API")
@@ -26,7 +28,7 @@ app.add_middleware(
 )
 
 # Initialize database
-db = init_db('postgresql://fileprocessor:yourpassword@localhost:5432/fileprocessor')
+db = init_db(os.getenv("DATABASE_URL"))
 
 # Default user configuration
 DEFAULT_USER = {
@@ -80,6 +82,15 @@ class AnalysisInstruction(BaseModel):
     title: str
     data_type: str
     description: str
+
+# Add this new model for chat requests
+class ChatRequest(BaseModel):
+    message: str
+    document_ids: List[int]
+
+# Add this new model for the analyze request
+class AnalyzeRequest(BaseModel):
+    instructions: List[AnalysisInstruction]
 
 # User endpoints
 @app.get("/users/me", response_model=UserResponse)
@@ -143,7 +154,7 @@ async def upload_document(
 @app.post("/projects/{project_id}/analyze/")
 async def analyze_documents(
     project_id: int,
-    instructions: List[AnalysisInstruction],
+    analyze_request: AnalyzeRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -157,7 +168,7 @@ async def analyze_documents(
     for extraction in extractions:
         response = run_inference_on_document(
             extraction.content,
-            [inst.dict() for inst in instructions]
+            [inst.dict() for inst in analyze_request.instructions]
         )
         analyses_data.append({
             "file_name": extraction.file_name,
@@ -169,7 +180,7 @@ async def analyze_documents(
     analysis = Analysis(
         project_id=project_id,
         user_id=current_user.id,
-        instructions=[inst.dict() for inst in instructions],
+        instructions=[inst.dict() for inst in analyze_request.instructions],
         results={"batch_results": analyses_data},
         status="completed",
         analysis_type="batch"
@@ -183,14 +194,13 @@ async def analyze_documents(
 @app.post("/projects/{project_id}/chat/")
 async def chat(
     project_id: int,
-    message: str,
-    document_ids: List[int],
+    chat_request: ChatRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     # Get documents
     documents = db.query(Extraction).filter(
-        Extraction.id.in_(document_ids),
+        Extraction.id.in_(chat_request.document_ids),
         Extraction.project_id == project_id
     ).all()
 
@@ -200,7 +210,7 @@ async def chat(
     # Get conversation history
     history = db.query(Conversation).filter(
         Conversation.project_id == project_id,
-        Conversation.document_id.in_(document_ids)
+        Conversation.document_id.in_(chat_request.document_ids)
     ).order_by(Conversation.timestamp).all()
 
     # Combine document contents
@@ -210,7 +220,7 @@ async def chat(
     ])
 
     # Get response
-    response = chat_with_document(combined_content, message, history)
+    response = chat_with_document(combined_content, chat_request.message, history)
 
     # Save conversation for each document
     for doc in documents:
@@ -218,8 +228,8 @@ async def chat(
             user_id=current_user.id,
             project_id=project_id,
             document_id=doc.id,
-            files=document_ids,
-            user_input=message,
+            files=chat_request.document_ids,
+            user_input=chat_request.message,
             response=response,
             history=[{
                 "id": h.id,

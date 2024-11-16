@@ -12,3 +12,4 @@ utils/file_type/__pycache__/*
 ./.pytest_cache/*
 ./__pycache__/*
 ./.logs/*
+.env
