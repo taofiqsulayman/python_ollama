@@ -139,6 +139,9 @@ class ChatMessageResponse(BaseModel):
     content: str
     timestamp: datetime
 
+class ChatMessageList(BaseModel):
+    messages: List[dict]
+
 # User endpoints
 @app.get("/api/v1/users/me", response_model=UserResponse)
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
@@ -371,6 +374,25 @@ async def add_chat_message(
     db.commit()
 
     return {"response": response}
+
+@app.get("/api/v1/chat-sessions/{session_id}/messages", response_model=ChatMessageList)
+async def get_chat_messages(
+    session_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all messages for a chat session"""
+    messages = db.query(ChatMessage).filter_by(session_id=session_id).order_by(ChatMessage.timestamp).all()
+    return {
+        "messages": [
+            {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+                "additional_data": msg.additional_data
+            }
+            for msg in messages
+        ]
+    }
 
 if __name__ == "__main__":
     import uvicorn

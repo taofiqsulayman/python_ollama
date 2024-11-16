@@ -227,70 +227,74 @@ def analyze_page():
 
 def render_chat_interface(session_id: int, session_type: str = "document", current_image=None):
     """Shared chat interface component for both document and image chat"""
+    # Message display container
     messages_container = st.container()
-    
-    # Auto-refresh toggle
-    col1, col2 = st.columns([4, 1])
-    with col2:
-        auto_refresh = st.toggle("Auto-refresh", value=st.session_state.auto_refresh)
-        st.session_state.auto_refresh = auto_refresh
+    processing_container = st.empty()  # Container for loading indicator
+    input_container = st.container()  # Container for input
 
-    # Create a container for messages that will be updated
+    # Fetch existing messages
+    if session_id not in st.session_state.message_history:
+        messages_response = requests.get(
+            f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages"
+        )
+        if messages_response.status_code == 200:
+            st.session_state.message_history[session_id] = messages_response.json()["messages"]
+
+    # Display existing messages
     with messages_container:
-        if auto_refresh:
-            messages_response = requests.get(
-                f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages"
-            )
-            
-            if messages_response.status_code == 200:
-                messages = messages_response.json()
-                current_messages = st.session_state.message_history.get(session_id, [])
-                if len(messages) != len(current_messages):
-                    st.session_state.message_history[session_id] = messages
-                
-                for msg in messages:
-                    with st.chat_message(msg["role"]):
-                        st.write(msg["content"])
-                        st.caption(f":clock2: {msg.get('timestamp', 'No timestamp')}")
-
-    # Input area at the bottom
-    st.markdown("---")
-    input_container = st.container()
+        for msg in st.session_state.message_history.get(session_id, []):
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                st.caption(f":clock2: {msg['timestamp']}")
     
+    # Chat input
     with input_container:
         if prompt := st.chat_input("Type your message..."):
-            with st.spinner("Processing..."):
-                # Prepare message data based on session type
-                if session_type == "image" and current_image:
-                    image_bytes = current_image.getvalue()
-                    base64_image = base64.b64encode(image_bytes).decode()
+            # Show user message immediately
+            with st.chat_message("user"):
+                st.markdown(prompt)
+                st.caption(":clock2: Just now")
+            
+            # Add to session history immediately
+            st.session_state.message_history[session_id] = st.session_state.message_history.get(session_id, []) + [
+                {"role": "user", "content": prompt, "timestamp": "Just now"}
+            ]
+
+            # Show loading indicator in processing container
+            with processing_container:
+                with st.spinner("Processing..."):
+                    # Prepare message data
                     message_data = {
                         "content": prompt,
-                        "additional_data": {"image": base64_image}
+                        "additional_data": {
+                            "image": base64.b64encode(current_image.getvalue()).decode()
+                        } if session_type == "image" and current_image else None
                     }
-                else:
-                    message_data = {
-                        "content": prompt,
-                        "additional_data": None
-                    }
-                
-                # Show user message immediately
-                with st.chat_message("user"):
-                    st.write(prompt)
-                    st.caption(":clock2: Just now")
-                
-                # Send message to API
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages",
-                    json=message_data
-                )
-                
-                if response.status_code == 200:
-                    with st.chat_message("assistant"):
-                        st.write(response.json()["response"])
-                        st.caption(":clock2: Just now")
-                else:
-                    st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
+                    
+                    # Send message to API
+                    response = requests.post(
+                        f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages",
+                        json=message_data
+                    )
+                    
+                    if response.status_code == 200:
+                        assistant_response = response.json()["response"]
+                        # Add assistant response to history
+                        st.session_state.message_history[session_id].append({
+                            "role": "assistant",
+                            "content": assistant_response,
+                            "timestamp": "Just now"
+                        })
+                        
+                        # Show assistant response
+                        with st.chat_message("assistant"):
+                            st.markdown(assistant_response)
+                            st.caption(":clock2: Just now")
+                    else:
+                        st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
+
+            # Clear the processing container after response
+            processing_container.empty()
 
 def chat_page():
     """Render chat page with session management"""
