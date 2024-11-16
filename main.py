@@ -7,6 +7,7 @@ from typing import List, Optional, Dict
 from pydantic import BaseModel
 import base64
 import logging
+import torch
 
 from models import ChatMessage, ChatSession, init_db, User, Project, Extraction, Analysis
 from utils import process_files
@@ -430,6 +431,18 @@ async def get_chat_messages(
             for msg in messages
         ]
     }
+
+@app.on_event("startup")
+async def startup_event():
+    # Check GPU availability
+    if torch.cuda.is_available():
+        device_count = torch.cuda.device_count()
+        device_names = [torch.cuda.get_device_name(i) for i in range(device_count)]
+        logging.info(f"GPU available: {device_count} device(s)")
+        for i, name in enumerate(device_names):
+            logging.info(f"GPU {i}: {name}")
+    else:
+        logging.warning("No GPU available, running on CPU")
 
 if __name__ == "__main__":
     import uvicorn

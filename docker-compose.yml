@@ -3,12 +3,22 @@ version: '3.8'
 services:
   app:
     build: .
+    runtime: nvidia  # Enable NVIDIA runtime
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     ports:
       - "8000:8000"  # FastAPI
       - "8501:8501"  # Streamlit
     environment:
       - DATABASE_URL=postgresql://fileprocessor:${DB_PASSWORD}@db:5432/fileprocessor
       - PYTHONPATH=/app
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=all
     volumes:
       - ollama_models:/root/.ollama  # Persist Ollama models
     healthcheck:

@@ -1,8 +1,12 @@
 FROM ollama/ollama
 
+# Install NVIDIA Container Toolkit dependencies
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including CUDA
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -11,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     postgresql-client \
     antiword \
+    nvidia-cuda-toolkit \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
@@ -28,6 +33,8 @@ EXPOSE 8000 8501
 
 # Set environment variables
 ENV PYTHONPATH=/app \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    CUDA_VISIBLE_DEVICES=all \
+    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 
 ENTRYPOINT ["./entrypoint.sh"]
