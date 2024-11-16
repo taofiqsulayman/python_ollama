@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pydantic import BaseModel
 import json
 import base64
@@ -98,18 +98,36 @@ class ImageChatRequest(BaseModel):
     image: str  # base64 encoded image
     project_id: int
 
+# New Response Models
+class FileResponse(BaseModel):
+    id: int
+    file_name: str
+    content: str
+    processing_status: str
+    created_at: datetime
+
+class ChatHistoryItem(BaseModel):
+    user_input: str
+    response: str
+    timestamp: datetime
+
+class ChatHistoryResponse(BaseModel):
+    history: List[ChatHistoryItem]
+
 # User endpoints
-@app.get("/users/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
+@app.get("/api/v1/users/me", response_model=UserResponse)
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """Get current user information"""
     return current_user
 
 # Project endpoints
-@app.post("/projects/", response_model=ProjectResponse)
+@app.post("/api/v1/projects", response_model=ProjectResponse)
 async def create_project(
     project: ProjectCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """Create a new project"""
     db_project = Project(
         user_id=current_user.id,
         name=project.name,
@@ -120,50 +138,74 @@ async def create_project(
     db.refresh(db_project)
     return db_project
 
-@app.get("/projects/", response_model=List[ProjectResponse])
+@app.get("/api/v1/projects", response_model=List[ProjectResponse])
 async def list_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """List all projects for current user"""
     return db.query(Project).filter_by(user_id=current_user.id).all()
 
 # Document processing endpoints
-@app.post("/projects/{project_id}/documents/")
-async def upload_document(
+@app.post("/api/v1/projects/{project_id}/files")
+async def upload_project_files(
     project_id: int,
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Check project exists and belongs to user
+    """Upload multiple files to a project and return their processed content"""
     project = db.query(Project).filter_by(id=project_id, user_id=current_user.id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Process the file
-    content = await process_files(file)
+    results = []
+    for file in files:
+        content = await process_files(file)
+        extraction = Extraction(
+            user_id=current_user.id,
+            project_id=project_id,
+            file_name=file.filename,
+            content=content,
+            processing_status="completed"
+        )
+        db.add(extraction)
+        db.commit()
+        
+        results.append({
+            "id": extraction.id,
+            "file_name": file.filename,
+            "content": content,
+            "status": "completed"
+        })
     
-    # Save extraction
-    extraction = Extraction(
-        user_id=current_user.id,
+    return {"message": "Files processed successfully", "files": results}
+
+@app.get("/api/v1/projects/{project_id}/files", response_model=List[FileResponse])
+async def get_project_files(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all files associated with a project"""
+    files = db.query(Extraction).filter_by(
         project_id=project_id,
-        file_name=file.filename,
-        content=content,
-        processing_status="completed"
-    )
-    db.add(extraction)
-    db.commit()
+        user_id=current_user.id
+    ).all()
     
-    return {"message": "File processed successfully", "extraction_id": extraction.id}
+    if not files:
+        return []
+    return files
 
 # Analysis endpoints
-@app.post("/projects/{project_id}/analyze/")
-async def analyze_documents(
+@app.post("/api/v1/projects/{project_id}/analyze")
+async def analyze_project_documents(
     project_id: int,
     analyze_request: AnalyzeRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """Analyze documents in a project based on given instructions"""
     # Get project documents
     extractions = db.query(Extraction).filter_by(project_id=project_id).all()
     if not extractions:
@@ -197,13 +239,14 @@ async def analyze_documents(
     return {"analysis_id": analysis.id, "results": analyses_data}
 
 # Chat endpoints
-@app.post("/projects/{project_id}/chat/")
-async def chat(
+@app.post("/api/v1/projects/{project_id}/chat")
+async def chat_with_documents(
     project_id: int,
     chat_request: ChatRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """Chat with selected documents in a project"""
     # Get documents
     documents = db.query(Extraction).filter(
         Extraction.id.in_(chat_request.document_ids),
@@ -250,13 +293,62 @@ async def chat(
 
     return {"response": response}
 
+@app.get("/api/v1/projects/{project_id}/chat-history", response_model=ChatHistoryResponse)
+async def get_project_chat_history(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get document chat history for a project"""
+    history = db.query(Conversation).filter_by(
+        project_id=project_id,
+        user_id=current_user.id
+    ).order_by(Conversation.timestamp).all()
+    
+    return {
+        "history": [
+            {"user_input": h.user_input, "response": h.response, "timestamp": h.timestamp}
+            for h in history
+        ]
+    }
+
+@app.get("/api/v1/projects/{project_id}/image-chat-history", response_model=ChatHistoryResponse)
+async def get_project_image_chat_history(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get image chat history for a project"""
+    history = db.query(ImageInferencingHistory).filter_by(
+        project_id=project_id,
+        user_id=current_user.id
+    ).order_by(ImageInferencingHistory.timestamp).all()
+    
+    chat_history = []
+    for h in history:
+        if h.history:
+            for item in h.history:
+                if item.get("role") == "user":
+                    chat_history.append({
+                        "user_input": item["content"],
+                        "response": next(
+                            (x["content"] for x in h.history if x["role"] == "assistant"),
+                            "No response"
+                        ),
+                        "timestamp": h.timestamp
+                    })
+    
+    return {"history": chat_history}
+
 # Image chat endpoint
-@app.post("/chat-with-image/")
-async def chat_with_image_endpoint(
+@app.post("/api/v1/projects/{project_id}/image-chat")
+async def chat_with_your_image(
+    project_id: int,
     request: ImageChatRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """Chat about an image in a project"""
     try:
         # Decode base64 image
         image_bytes = base64.b64decode(request.image)
