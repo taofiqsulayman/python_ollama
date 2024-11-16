@@ -33,6 +33,7 @@ class Project(Base):
     user = relationship("User", back_populates="projects")
     extractions = relationship("Extraction", back_populates="project")
     analyses = relationship("Analysis", back_populates="project")
+    chat_sessions = relationship("ChatSession", back_populates="project")  # Add this line
 
 class Extraction(Base):
     __tablename__ = 'extractions'
@@ -74,35 +75,39 @@ analysis_extraction = Table(
     Column('extraction_id', Integer, ForeignKey('extractions.id'))
 )
 
-class Conversation(Base):
-    __tablename__ = 'conversations'
+class ChatSession(Base):
+    __tablename__ = 'chat_sessions'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(String, ForeignKey('users.id'))
     project_id = Column(Integer, ForeignKey('projects.id'))
-    document_id = Column(Integer, ForeignKey('extractions.id'))
-    files = Column(JSON)  # New field for files involved in the chat
-    user_input = Column(String, nullable=False)
-    response = Column(String, nullable=False)
-    history = Column(JSON)  # New field for conversation history
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    user_id = Column(String, ForeignKey('users.id'))
+    name = Column(String)  # Optional name for the chat session
+    files = Column(JSON)  # List of file IDs involved
+    created_at = Column(DateTime, default=datetime.utcnow)
+    session_type = Column(String)  # 'document' or 'image'
     
+    # Relationships
+    project = relationship("Project", back_populates="chat_sessions")
+    messages = relationship("ChatMessage", back_populates="session", order_by="ChatMessage.timestamp")
     user = relationship("User")
-    project = relationship("Project")
-    document = relationship("Extraction")
 
-class ImageInferencingHistory(Base):
-    __tablename__ = 'image_inferencing_history'
+class ChatMessage(Base):
+    __tablename__ = 'chat_messages'
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(String, ForeignKey('users.id'))
-    project_id = Column(Integer, ForeignKey('projects.id'))
-    file = Column(String, nullable=False)  # New field for the file involved in the chat
-    history = Column(JSON)  # New field for conversation history
+    session_id = Column(Integer, ForeignKey('chat_sessions.id'))
+    role = Column(String)  # 'user' or 'assistant'
+    content = Column(String)
     timestamp = Column(DateTime, default=datetime.utcnow)
+    additional_data = Column(JSON, nullable=True)  # Renamed from metadata to additional_data
     
-    user = relationship("User")
-    project = relationship("Project")
+    session = relationship("ChatSession", back_populates="messages")
+
+# Remove or deprecate the Conversation class as it's being replaced by ChatSession and ChatMessage
+
+# Remove these classes as they're being replaced
+# class Conversation
+# class ImageInferencingHistory
 
 def init_db(database_url: str):
     if not database_url:

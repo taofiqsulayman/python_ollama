@@ -1,14 +1,13 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
 from datetime import datetime
 from typing import List, Optional, Dict
 from pydantic import BaseModel
-import json
 import base64
 
-from models import ImageInferencingHistory, init_db, User, Project, Extraction, Analysis, Conversation
+from models import ChatMessage, ChatSession, init_db, User, Project, Extraction, Analysis
 from utils import process_files
 from ollama_setup import run_inference_on_document, chat_with_document, chat_with_image
 
@@ -113,6 +112,27 @@ class ChatHistoryItem(BaseModel):
 
 class ChatHistoryResponse(BaseModel):
     history: List[ChatHistoryItem]
+
+# Add new models
+class ChatSessionCreate(BaseModel):
+    name: Optional[str]
+    file_ids: List[int]
+    session_type: str = "document"  # 'document' or 'image'
+
+class ChatMessageCreate(BaseModel):
+    content: str
+    additional_data: Optional[Dict] = None  # Updated from metadata to additional_data
+
+class ChatSessionResponse(BaseModel):
+    id: int
+    name: Optional[str]
+    file_ids: List[int]
+    created_at: datetime
+
+class ChatMessageResponse(BaseModel):
+    role: str
+    content: str
+    timestamp: datetime
 
 # User endpoints
 @app.get("/api/v1/users/me", response_model=UserResponse)
@@ -239,157 +259,97 @@ async def analyze_project_documents(
     return {"analysis_id": analysis.id, "results": analyses_data}
 
 # Chat endpoints
-@app.post("/api/v1/projects/{project_id}/chat")
-async def chat_with_documents(
+@app.post("/api/v1/projects/{project_id}/chat-sessions")
+async def create_chat_session(
     project_id: int,
-    chat_request: ChatRequest,
+    session: ChatSessionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Chat with selected documents in a project"""
-    # Get documents
-    documents = db.query(Extraction).filter(
-        Extraction.id.in_(chat_request.document_ids),
-        Extraction.project_id == project_id
-    ).all()
+    """Create a new chat session"""
+    chat_session = ChatSession(
+        project_id=project_id,
+        user_id=current_user.id,
+        name=session.name,
+        files=session.file_ids,
+        session_type=session.session_type
+    )
+    db.add(chat_session)
+    db.commit()
+    return chat_session
 
-    if not documents:
-        raise HTTPException(status_code=404, detail="Documents not found")
+@app.get("/api/v1/projects/{project_id}/chat-sessions")
+async def list_chat_sessions(
+    project_id: int,
+    session_type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """List chat sessions in a project, optionally filtered by type"""
+    query = db.query(ChatSession).filter_by(project_id=project_id)
+    if session_type:
+        query = query.filter_by(session_type=session_type)
+    return query.order_by(ChatSession.created_at.desc()).all()
 
-    # Get conversation history
-    history = db.query(Conversation).filter(
-        Conversation.project_id == project_id,
-        Conversation.document_id.in_(chat_request.document_ids)
-    ).order_by(Conversation.timestamp).all()
+@app.post("/api/v1/chat-sessions/{session_id}/messages")
+async def add_chat_message(
+    session_id: int,
+    message: ChatMessageCreate,
+    db: Session = Depends(get_db)
+):
+    """Add a message to a chat session"""
+    session = db.query(ChatSession).get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
 
-    # Combine document contents
-    combined_content = "\n\n".join([
-        f"file name: {doc.file_name}\ncontent:\n{doc.content}"
-        for doc in documents
-    ])
-
-    # Get response
-    response = chat_with_document(combined_content, chat_request.message, history)
-
-    # Save conversation for each document
-    for doc in documents:
-        conversation = Conversation(
-            user_id=current_user.id,
-            project_id=project_id,
-            document_id=doc.id,
-            files=chat_request.document_ids,
-            user_input=chat_request.message,
-            response=response,
-            history=[{
-                "id": h.id,
-                "user_input": h.user_input,
-                "response": h.response,
-                "timestamp": h.timestamp.isoformat()
-            } for h in history]
+    # Handle different session types
+    if session.session_type == "document":
+        documents = db.query(Extraction).filter(
+            Extraction.id.in_(session.files)
+        ).all()
+        
+        # Get chat history
+        history = db.query(ChatMessage).filter_by(session_id=session_id).all()
+        
+        # Get response from model
+        response = chat_with_document(
+            "\n\n".join(doc.content for doc in documents),
+            message.content,
+            history
         )
-        db.add(conversation)
+    elif session.session_type == "image":
+        if not message.additional_data or "image" not in message.additional_data:  # Updated from metadata
+            raise HTTPException(status_code=400, detail="Image data required for image chat")
+        
+        image_bytes = base64.b64decode(message.additional_data["image"])  # Updated from metadata
+        history = db.query(ChatMessage).filter_by(session_id=session_id).all()
+        
+        response = chat_with_image(
+            image_bytes=image_bytes,
+            prompt=message.content,
+            conversation_history=history
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Invalid session type")
+
+    # Save messages
+    messages_to_add = [
+        ChatMessage(
+            session_id=session_id,
+            role="user",
+            content=message.content,
+            additional_data=message.additional_data  # Updated from metadata
+        ),
+        ChatMessage(
+            session_id=session_id,
+            role="assistant",
+            content=response
+        )
+    ]
     
+    db.add_all(messages_to_add)
     db.commit()
 
     return {"response": response}
-
-@app.get("/api/v1/projects/{project_id}/chat-history", response_model=ChatHistoryResponse)
-async def get_project_chat_history(
-    project_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get document chat history for a project"""
-    history = db.query(Conversation).filter_by(
-        project_id=project_id,
-        user_id=current_user.id
-    ).order_by(Conversation.timestamp).all()
-    
-    return {
-        "history": [
-            {"user_input": h.user_input, "response": h.response, "timestamp": h.timestamp}
-            for h in history
-        ]
-    }
-
-@app.get("/api/v1/projects/{project_id}/image-chat-history", response_model=ChatHistoryResponse)
-async def get_project_image_chat_history(
-    project_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get image chat history for a project"""
-    history = db.query(ImageInferencingHistory).filter_by(
-        project_id=project_id,
-        user_id=current_user.id
-    ).order_by(ImageInferencingHistory.timestamp).all()
-    
-    chat_history = []
-    for h in history:
-        if h.history:
-            for item in h.history:
-                if item.get("role") == "user":
-                    chat_history.append({
-                        "user_input": item["content"],
-                        "response": next(
-                            (x["content"] for x in h.history if x["role"] == "assistant"),
-                            "No response"
-                        ),
-                        "timestamp": h.timestamp
-                    })
-    
-    return {"history": chat_history}
-
-# Image chat endpoint
-@app.post("/api/v1/projects/{project_id}/image-chat")
-async def chat_with_your_image(
-    project_id: int,
-    request: ImageChatRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Chat about an image in a project"""
-    try:
-        # Decode base64 image
-        image_bytes = base64.b64decode(request.image)
-        
-        # Get conversation history
-        history = db.query(ImageInferencingHistory).filter(
-            ImageInferencingHistory.project_id == request.project_id
-        ).order_by(ImageInferencingHistory.timestamp.desc()).limit(5).all()
-
-        conversation_history = []
-        for h in history:
-            if h.history:
-                conversation_history.extend(h.history)
-
-        # Get response from model
-        response = chat_with_image(
-            image_bytes=image_bytes,
-            prompt=request.message,
-            conversation_history=conversation_history
-        )
-
-        # Save to history
-        history_entry = ImageInferencingHistory(
-            user_id=current_user.id,
-            project_id=request.project_id,
-            file=f"chat_{datetime.utcnow().isoformat()}",
-            history=[*conversation_history, {
-                "role": "user",
-                "content": request.message
-            }, {
-                "role": "assistant",
-                "content": response
-            }]
-        )
-        db.add(history_entry)
-        db.commit()
-
-        return {"response": response}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
