@@ -127,8 +127,12 @@ class ChatMessageCreate(BaseModel):
 class ChatSessionResponse(BaseModel):
     id: int
     name: Optional[str]
-    file_ids: List[int]
+    files: List[int]  # Changed from file_ids to match the model
+    session_type: str
     created_at: datetime
+
+    class Config:
+        orm_mode = True  # Enable ORM mode to allow direct model return
 
 class ChatMessageResponse(BaseModel):
     role: str
@@ -269,7 +273,7 @@ async def analyze_project_documents(
     return {"analysis_id": analysis.id, "results": analyses_data}
 
 # Chat endpoints
-@app.post("/api/v1/projects/{project_id}/chat-sessions")
+@app.post("/api/v1/projects/{project_id}/chat-sessions", response_model=ChatSessionResponse)
 async def create_chat_session(
     project_id: int,
     session: ChatSessionCreate,
@@ -286,6 +290,7 @@ async def create_chat_session(
     )
     db.add(chat_session)
     db.commit()
+    db.refresh(chat_session)  # Make sure to refresh to get the ID
     return chat_session
 
 @app.get("/api/v1/projects/{project_id}/chat-sessions")

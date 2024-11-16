@@ -16,18 +16,23 @@ st.set_page_config(
 
 # Session state initialization
 def init_session_state():
-    if "initialized" not in st.session_state:
-        st.session_state.update({
-            "initialized": True,
-            "stage": "projects",
-            "current_project_id": None,
-            "current_chat_session": None,  # Add this to track active chat session
-            "chat_sessions": {},  # Store chat sessions by project
-            "image_chat_history": [],
-            "chat_messages": [],  # Add chat messages history
-            "image_chat_messages": [],  # Add image chat messages history
-            "instructions": [],  # Move instructions to top level
-        })
+    default_state = {
+        "initialized": True,
+        "stage": "projects",
+        "current_project_id": None,
+        "current_chat_session": None,  # Chat session ID
+        "instructions": [],  # Analysis instructions
+        # Chat history per session
+        "chat_sessions": {},  # Dictionary to store chat sessions by ID
+        "current_chat_name": None,  # Name of current chat session
+        "current_chat_files": [],  # Files in current chat session
+        "current_chat_type": None,  # 'document' or 'image'
+    }
+    
+    # Initialize each key if it doesn't exist
+    for key, value in default_state.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 init_session_state()
 
@@ -223,6 +228,10 @@ def chat_page():
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
         st.rerun()
+    
+    # Initialize chat session if needed
+    if "current_chat_session" not in st.session_state:
+        st.session_state.current_chat_session = None
 
     # Chat session management
     col1, col2 = st.columns([2, 1])
@@ -238,19 +247,33 @@ def chat_page():
             )
             
             if st.button("Start New Chat") and selected_docs:
-                # Create new chat session
-                session_data = {
-                    "name": f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                    "file_ids": [doc[0] for doc in selected_docs],
-                    "session_type": "document"
-                }
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
-                    json=session_data
-                )
-                if response.status_code == 200:
-                    st.session_state.current_chat_session = response.json()["id"]
-                    st.rerun()
+                try:
+                    session_data = {
+                        "name": f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                        "file_ids": [doc[0] for doc in selected_docs],
+                        "session_type": "document"
+                    }
+                    
+                    response = requests.post(
+                        f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
+                        json=session_data
+                    )
+                    
+                    if response.status_code == 200:
+                        # Debug the response
+                        response_data = response.json()
+                        st.write("Debug - Full Response:", response_data)
+                        
+                        if "id" in response_data:
+                            st.session_state.current_chat_session = response_data["id"]
+                            st.rerun()
+                        else:
+                            st.error(f"Invalid response format. Expected 'id' in response. Got: {response_data}")
+                    else:
+                        st.error(f"Error {response.status_code}: {response.text}")
+                except Exception as e:
+                    st.error(f"Error creating chat session: {str(e)}")
+                    st.write("Response content:", response.text)
 
     with col2:
         # List existing chat sessions
@@ -309,23 +332,39 @@ def chat_with_image_page():
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
         st.rerun()
+    
+    # Initialize chat session if needed
+    if "current_chat_session" not in st.session_state:
+        st.session_state.current_chat_session = None
 
     # Session management for image chat
     col1, col2 = st.columns([2, 1])
     with col1:
         if st.button("Start New Image Chat"):
-            session_data = {
-                "name": f"Image Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                "file_ids": [],
-                "session_type": "image"
-            }
-            response = requests.post(
-                f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
-                json=session_data
-            )
-            if response.status_code == 200:
-                st.session_state.current_chat_session = response.json()["id"]
-                st.rerun()
+            try:
+                session_data = {
+                    "name": f"Image Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    "file_ids": [],
+                    "session_type": "image"
+                }
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
+                    json=session_data
+                )
+                
+                if response.status_code == 200:
+                    session_data = response.json()
+                    # Debug the response
+                    st.write("Debug - Session Response:", session_data)
+                    st.session_state.current_chat_session = session_data.get("id")
+                    if st.session_state.current_chat_session:
+                        st.rerun()
+                    else:
+                        st.error("Failed to get chat session ID from response")
+                else:
+                    st.error(f"Failed to create chat session: {response.text}")
+            except Exception as e:
+                st.error(f"Error creating chat session: {str(e)}")
 
     with col2:
         # List existing image chat sessions
