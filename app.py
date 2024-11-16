@@ -20,6 +20,8 @@ def init_session_state():
             "initialized": True,
             "stage": "projects",
             "current_project_id": None,
+            "current_chat_session": None,  # Add this to track active chat session
+            "chat_sessions": {},  # Store chat sessions by project
             "image_chat_history": [],
             "chat_messages": [],  # Add chat messages history
             "image_chat_messages": []  # Add image chat messages history
@@ -183,60 +185,90 @@ def analyze_page():
         st.error(f"Error analyzing documents: {response.json()['detail']}")
 
 def chat_page():
-    """Render chat page"""
+    """Render chat page with session management"""
     st.title("Chat with Documents")
     
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
         st.rerun()
-        
-    # Get documents for the current project
-    response = requests.get(f"{API_BASE_URL}/projects/{st.session_state.current_project_id}/documents/")
-    if response.status_code == 200:
-        documents = response.json()
-        selected_docs = st.multiselect(
-            "Select documents to chat with",
-            options=[(doc["id"], doc["file_name"]) for doc in documents],
-            format_func=lambda x: x[1]
-        )
-        
-        # Display chat history
-        for message in st.session_state.chat_messages:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-        
-        if prompt := st.chat_input("Your message"):
-            doc_ids = [doc[0] for doc in selected_docs]
-            chat_request = {
-                "message": prompt,
-                "document_ids": doc_ids
-            }
+
+    # Chat session management
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        # Get project files for new chat
+        response = requests.get(f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/files")
+        if response.status_code == 200:
+            documents = response.json()
+            selected_docs = st.multiselect(
+                "Select documents for new chat",
+                options=[(doc["id"], doc["file_name"]) for doc in documents],
+                format_func=lambda x: x[1]
+            )
             
-            # Add user message to history
-            st.session_state.chat_messages.append({"role": "user", "content": prompt})
+            if st.button("Start New Chat") and selected_docs:
+                # Create new chat session
+                session_data = {
+                    "name": f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    "file_ids": [doc[0] for doc in selected_docs],
+                    "session_type": "document"
+                }
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
+                    json=session_data
+                )
+                if response.status_code == 200:
+                    st.session_state.current_chat_session = response.json()["id"]
+                    st.rerun()
+
+    with col2:
+        # List existing chat sessions
+        response = requests.get(
+            f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
+            params={"session_type": "document"}
+        )
+        if response.status_code == 200:
+            sessions = response.json()
+            session_names = {s["id"]: s["name"] for s in sessions}
+            selected_session = st.selectbox(
+                "Or select existing chat",
+                options=list(session_names.keys()),
+                format_func=lambda x: session_names[x],
+                index=None
+            )
+            if selected_session:
+                st.session_state.current_chat_session = selected_session
+
+    # Chat interface
+    if st.session_state.current_chat_session:
+        # Display chat messages
+        messages_response = requests.get(
+            f"{API_BASE_URL}/api/v1/chat-sessions/{st.session_state.current_chat_session}/messages"
+        )
+        if messages_response.status_code == 200:
+            for msg in messages_response.json():
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
+
+        # Chat input
+        if prompt := st.chat_input("Your message"):
+            message_data = {
+                "content": prompt,
+                "additional_data": None
+            }
             
             with st.chat_message("user"):
                 st.write(prompt)
             
             response = requests.post(
-                f"{API_BASE_URL}/projects/{st.session_state.current_project_id}/chat/",
-                json=chat_request
+                f"{API_BASE_URL}/api/v1/chat-sessions/{st.session_state.current_chat_session}/messages",
+                json=message_data
             )
             
             if response.status_code == 200:
-                assistant_response = response.json()["response"]
-                # Add assistant response to history
-                st.session_state.chat_messages.append({"role": "assistant", "content": assistant_response})
-                
                 with st.chat_message("assistant"):
-                    st.write(assistant_response)
+                    st.write(response.json()["response"])
             else:
                 st.error(f"Error: {response.json()['detail']}")
-                
-        # Add a clear chat button
-        if st.button("Clear Chat History"):
-            st.session_state.chat_messages = []
-            st.rerun()
 
 def chat_with_image_page():
     """Render image chat page"""
@@ -245,10 +277,46 @@ def chat_with_image_page():
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
         st.rerun()
-    
+
+    # Session management for image chat
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        if st.button("Start New Image Chat"):
+            session_data = {
+                "name": f"Image Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                "file_ids": [],
+                "session_type": "image"
+            }
+            response = requests.post(
+                f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
+                json=session_data
+            )
+            if response.status_code == 200:
+                st.session_state.current_chat_session = response.json()["id"]
+                st.rerun()
+
+    with col2:
+        # List existing image chat sessions
+        response = requests.get(
+            f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
+            params={"session_type": "image"}
+        )
+        if response.status_code == 200:
+            sessions = response.json()
+            session_names = {s["id"]: s["name"] for s in sessions}
+            selected_session = st.selectbox(
+                "Or select existing image chat",
+                options=list(session_names.keys()),
+                format_func=lambda x: session_names[x],
+                index=None
+            )
+            if selected_session:
+                st.session_state.current_chat_session = selected_session
+
+    # Image upload and chat interface
     uploaded_file = st.file_uploader("Upload an image", type=["png", "jpg", "jpeg"])
     
-    if uploaded_file:
+    if uploaded_file and st.session_state.current_chat_session:
         image = Image.open(uploaded_file)
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -262,46 +330,37 @@ def chat_with_image_page():
                 mime=f"image/{uploaded_file.type.split('/')[-1]}"
             )
         
-        # Display image chat history
-        for message in st.session_state.image_chat_messages:
-            with st.chat_message(message["role"]):
-                st.write(message["content"])
-        
+        # Display chat history
+        messages_response = requests.get(
+            f"{API_BASE_URL}/api/v1/chat-sessions/{st.session_state.current_chat_session}/messages"
+        )
+        if messages_response.status_code == 200:
+            for msg in messages_response.json():
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
+
         if prompt := st.chat_input("Ask about the image"):
             image_bytes = uploaded_file.getvalue()
             base64_image = base64.b64encode(image_bytes).decode()
             
-            chat_request = {
-                "message": prompt,
-                "image": base64_image,
-                "project_id": st.session_state.current_project_id
+            message_data = {
+                "content": prompt,
+                "additional_data": {"image": base64_image}
             }
-            
-            # Add user message to history
-            st.session_state.image_chat_messages.append({"role": "user", "content": prompt})
             
             with st.chat_message("user"):
                 st.write(prompt)
             
             response = requests.post(
-                f"{API_BASE_URL}/chat-with-image/",
-                json=chat_request
+                f"{API_BASE_URL}/api/v1/chat-sessions/{st.session_state.current_chat_session}/messages",
+                json=message_data
             )
             
             if response.status_code == 200:
-                assistant_response = response.json()["response"]
-                # Add assistant response to history
-                st.session_state.image_chat_messages.append({"role": "assistant", "content": assistant_response})
-                
                 with st.chat_message("assistant"):
-                    st.write(assistant_response)
+                    st.write(response.json()["response"])
             else:
                 st.error(f"Error: {response.json()['detail']}")
-        
-        # Add a clear chat button
-        if st.button("Clear Chat History"):
-            st.session_state.image_chat_messages = []
-            st.rerun()
 
 def main():
     render_sidebar()
