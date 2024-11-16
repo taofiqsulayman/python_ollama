@@ -1,11 +1,12 @@
-from datetime import datetime
 import streamlit as st
 import requests
 import json
 from PIL import Image
 import base64
 import pandas as pd
-import time
+
+import streamlit_nested_layout  # noqa: F401
+
 
 # Page config
 st.set_page_config(
@@ -227,43 +228,59 @@ def analyze_page():
 
 def render_chat_interface(session_id: int, session_type: str = "document", current_image=None):
     """Shared chat interface component for both document and image chat"""
-    # Message display container
-    messages_container = st.container()
-    processing_container = st.empty()  # Container for loading indicator
-    input_container = st.container()  # Container for input
+    # Create a main container for all chat components
+    main_container = st.container()
+    
+    # Create containers but don't write to them yet
+    with main_container:
+        messages_area = st.container()
+        # Add some space between messages and input
+        st.markdown("<br>" * 2, unsafe_allow_html=True)
+        # Processing and input at the bottom
+        input_area = st.container()
+        
+        # Use columns to create a fixed bottom area
+        col1, col2 = st.columns([6, 1])
+        with col1:
+            processing_placeholder = st.empty()
+        with col2:
+            # Optional: Add any controls like clear chat, etc.
+            if st.button("Clear Chat"):
+                st.session_state.message_history[session_id] = []
+                st.rerun()
 
-    # Fetch existing messages
-    if session_id not in st.session_state.message_history:
-        messages_response = requests.get(
-            f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages"
-        )
-        if messages_response.status_code == 200:
-            st.session_state.message_history[session_id] = messages_response.json()["messages"]
+    # Fetch and display messages in the messages area
+    with messages_area:
+        if session_id not in st.session_state.message_history:
+            messages_response = requests.get(
+                f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages"
+            )
+            if messages_response.status_code == 200:
+                st.session_state.message_history[session_id] = messages_response.json()["messages"]
 
-    # Display existing messages
-    with messages_container:
+        # Display messages
         for msg in st.session_state.message_history.get(session_id, []):
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
                 st.caption(f":clock2: {msg['timestamp']}")
-    
-    # Chat input
-    with input_container:
-        if prompt := st.chat_input("Type your message..."):
+
+    # Handle input and processing at the bottom
+    with input_area:
+        if prompt := st.chat_input("Type your message...", key=f"chat_input_{session_id}"):
             # Show user message immediately
-            with st.chat_message("user"):
-                st.markdown(prompt)
-                st.caption(":clock2: Just now")
+            with messages_area:
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                    st.caption(":clock2: Just now")
             
             # Add to session history immediately
             st.session_state.message_history[session_id] = st.session_state.message_history.get(session_id, []) + [
                 {"role": "user", "content": prompt, "timestamp": "Just now"}
             ]
 
-            # Show loading indicator in processing container
-            with processing_container:
+            # Show loading indicator
+            with processing_placeholder:
                 with st.spinner("Processing..."):
-                    # Prepare message data
                     message_data = {
                         "content": prompt,
                         "additional_data": {
@@ -271,7 +288,6 @@ def render_chat_interface(session_id: int, session_type: str = "document", curre
                         } if session_type == "image" and current_image else None
                     }
                     
-                    # Send message to API
                     response = requests.post(
                         f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages",
                         json=message_data
@@ -279,22 +295,22 @@ def render_chat_interface(session_id: int, session_type: str = "document", curre
                     
                     if response.status_code == 200:
                         assistant_response = response.json()["response"]
-                        # Add assistant response to history
+                        with messages_area:
+                            with st.chat_message("assistant"):
+                                st.markdown(assistant_response)
+                                st.caption(":clock2: Just now")
+                        
+                        # Add to history
                         st.session_state.message_history[session_id].append({
                             "role": "assistant",
                             "content": assistant_response,
                             "timestamp": "Just now"
                         })
-                        
-                        # Show assistant response
-                        with st.chat_message("assistant"):
-                            st.markdown(assistant_response)
-                            st.caption(":clock2: Just now")
                     else:
                         st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
 
-            # Clear the processing container after response
-            processing_container.empty()
+            # Clear the processing indicator
+            processing_placeholder.empty()
 
 def chat_page():
     """Render chat page with session management"""
@@ -324,7 +340,7 @@ def chat_page():
             if st.button("Start New Chat") and selected_docs:
                 try:
                     session_data = {
-                        "name": f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                        "name": "New Chat Session",  # Generic initial name
                         "file_ids": [doc[0] for doc in selected_docs],
                         "session_type": "document"
                     }
@@ -391,7 +407,7 @@ def chat_with_image_page():
         if st.button("Start New Image Chat"):
             try:
                 session_data = {
-                    "name": f"Image Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    "name": "New Image Chat Session",  # Generic initial name
                     "file_ids": [],
                     "session_type": "image"
                 }

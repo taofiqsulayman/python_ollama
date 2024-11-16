@@ -276,6 +276,38 @@ async def analyze_project_documents(
     return {"analysis_id": analysis.id, "results": analyses_data}
 
 # Chat endpoints
+def generate_session_name(first_message: str, session_type: str) -> str:
+    """Generate a meaningful name for the chat session"""
+    # Truncate long messages and clean up the text
+    max_length = 50
+    cleaned_message = first_message.strip().replace("\n", " ")
+    truncated_message = (
+        f"{cleaned_message[:max_length]}..." 
+        if len(cleaned_message) > max_length 
+        else cleaned_message
+    )
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    prefix = "Image Chat" if session_type == "image" else "Chat"
+    
+    return f"{prefix}: {truncated_message} ({timestamp})"
+
+@app.post("/api/v1/chat-sessions/{session_id}/update", response_model=ChatSessionResponse)
+async def update_chat_session(
+    session_id: int,
+    name: str,
+    db: Session = Depends(get_db)
+):
+    """Update chat session name"""
+    session = db.query(ChatSession).get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    
+    session.name = name
+    db.commit()
+    db.refresh(session)
+    return session
+
 @app.post("/api/v1/projects/{project_id}/chat-sessions", response_model=ChatSessionResponse)
 async def create_chat_session(
     project_id: int,
@@ -356,22 +388,27 @@ async def add_chat_message(
         raise HTTPException(status_code=400, detail="Invalid session type")
 
     # Save messages
-    messages_to_add = [
-        ChatMessage(
-            session_id=session_id,
-            role="user",
-            content=message.content,
-            additional_data=message.additional_data
-        ),
-        ChatMessage(
-            session_id=session_id,
-            role="assistant",
-            content=response
-        )
-    ]
+    user_message = ChatMessage(
+        session_id=session_id,
+        role="user",
+        content=message.content,
+        additional_data=message.additional_data
+    )
+    assistant_message = ChatMessage(
+        session_id=session_id,
+        role="assistant",
+        content=response
+    )
     
-    db.add_all(messages_to_add)
+    db.add_all([user_message, assistant_message])
     db.commit()
+
+    # Update session name if this is the first message
+    message_count = db.query(ChatMessage).filter_by(session_id=session_id).count()
+    if message_count <= 2:  # Just added first user message and response
+        new_name = generate_session_name(message.content, session.session_type)
+        session.name = new_name
+        db.commit()
 
     return {"response": response}
 
