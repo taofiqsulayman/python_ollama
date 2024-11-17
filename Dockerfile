@@ -34,7 +34,7 @@ EXPOSE 8000 8501
 # Set environment variables
 ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
-    CUDA_VISIBLE_DEVICES=all \
-    PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    CUDA_VISIBLE_DEVICES=all
 
+    
 ENTRYPOINT ["./entrypoint.sh"]

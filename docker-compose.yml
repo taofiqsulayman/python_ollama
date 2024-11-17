@@ -23,9 +23,6 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ollama_models:/root/.ollama  # Persist Ollama models
-      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi  # Map nvidia-smi
-      - /usr/lib64/libnvidia-ml.so:/usr/lib64/libnvidia-ml.so  # Map NVIDIA libraries
-      - /usr/lib64/libnvidia-ml.so.1:/usr/lib64/libnvidia-ml.so.1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
       interval: 30s
