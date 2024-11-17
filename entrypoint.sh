@@ -11,7 +11,7 @@ sleep 5
 
 # Pull models at runtime
 echo "Pulling Ollama models..."
-ollama pull llama3.2:3b
+ollama pull llama3.2
 ollama pull llama3.2-vision
 
 # Wait for PostgreSQL to be ready
