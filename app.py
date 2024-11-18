@@ -3,7 +3,7 @@ import requests
 import json
 from PIL import Image
 import base64
-import pandas as pd  # Add this import
+import pandas as pd
 
 # Page config
 st.set_page_config(
@@ -140,10 +140,12 @@ def upload_page():
                 )
     
     st.markdown("### Upload New Files")
+    key = "file_uploader_" + str(st.session_state.get('upload_counter', 0))
     uploaded_files = st.file_uploader(
         "Choose files to upload",
         accept_multiple_files=True,
-        type=["txt", "pdf", "docx"]
+        type=["txt", "pdf", "docx"],
+        key=key
     )
     
     if uploaded_files:
@@ -162,6 +164,8 @@ def upload_page():
                 
                 if result:
                     st.success(f"Successfully processed {len(result['files'])} files!")
+                    # Increment counter to reset file uploader
+                    st.session_state.upload_counter = st.session_state.get('upload_counter', 0) + 1
                     st.rerun()
 
 def analyze_page():
@@ -308,6 +312,22 @@ def chat_page():
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
 
+    # Get chat history from API
+    history = api_request(
+        "GET", 
+        f"projects/{st.session_state.current_project_id}/chat-history",
+        params={"chat_type": "document"}  # Filter by document type
+    )
+    
+    if history and "history" in history:
+        st.session_state.chat_messages = [
+            {"role": "user", "content": msg["prompt"]}
+            for msg in history["history"]
+        ] + [
+            {"role": "assistant", "content": msg["response"]}
+            for msg in history["history"]
+        ]
+
     # Show available documents
     st.sidebar.markdown("### Available Documents")
     files = api_request("GET", f"projects/{st.session_state.current_project_id}/files")
@@ -366,6 +386,22 @@ def chat_with_image_page():
     
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
+
+    # Get chat history from API filtered by image type
+    history = api_request(
+        "GET", 
+        f"projects/{st.session_state.current_project_id}/chat-history",
+        params={"chat_type": "image"}  # Filter by image type
+    )
+    
+    if history and "history" in history:
+        st.session_state.chat_messages = [
+            {"role": "user", "content": msg["prompt"]}
+            for msg in history["history"]
+        ] + [
+            {"role": "assistant", "content": msg["response"]}
+            for msg in history["history"]
+        ]
 
     # Image upload
     uploaded_file = st.file_uploader(
