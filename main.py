@@ -364,13 +364,13 @@ async def chat_with_project(
     else:
         raise HTTPException(status_code=400, detail="Invalid chat type")
 
-    # Save chat history with the chat_type from the request
+    # Updated chat history creation
     chat_history = ChatHistory(
         project_id=project_id,
-        user_id=current_user.id,
+        user_id=current_user.id,  # This will now work with the updated model
         prompt=chat_request.prompt,
         response=response,
-        chat_type=chat_request.chat_type  # This is where we save the type
+        chat_type=chat_request.chat_type
     )
     db.add(chat_history)
     db.commit()

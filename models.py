@@ -68,12 +68,14 @@ class ChatHistory(Base):
     
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey('projects.id'))
+    user_id = Column(String, ForeignKey('users.id'))  # Add user_id field
     prompt = Column(String, nullable=False)
     response = Column(String, nullable=False)
     chat_type = Column(String)  # 'document' or 'image'
     created_at = Column(DateTime, default=datetime.utcnow)
     
     project = relationship("Project", back_populates="chat_history")
+    user = relationship("User")  # Add user relationship
 
 # Association table for many-to-many relationship between Analysis and Extraction
 analysis_extraction = Table(
