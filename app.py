@@ -222,26 +222,58 @@ def analyze_page():
                 if result and "results" in result:
                     results = result["results"]
                     
-                    # Create DataFrame from results
+                    # Create DataFrame from nested results
                     try:
-                        # Extract values from nested result structure
+                        # Initialize data dictionary
                         data = {}
-                        for field, details in results.items():
-                            data[field] = details.get("value", None)
+                        confidence_data = {}
+                        sources_data = {}
                         
-                        # Create DataFrame with single row
-                        df = pd.DataFrame([data])
+                        # Extract data from nested structure
+                        for field, field_data in results.items():
+                            if isinstance(field_data, list):
+                                # Handle array of results
+                                for item in field_data:
+                                    data[field] = item.get("value")
+                                    confidence_data[field] = item.get("confidence", "unknown")
+                                    sources_data[field] = item.get("source", "unknown")
+                            else:
+                                # Handle single result
+                                data[field] = field_data.get("value")
+                                confidence_data[field] = field_data.get("confidence", "unknown")
+                                sources_data[field] = field_data.get("source", "unknown")
                         
-                        # Display the table
-                        st.markdown("#### Results Table")
+                        # Create DataFrames
+                        results_df = pd.DataFrame([data])
+                        confidence_df = pd.DataFrame([confidence_data])
+                        sources_df = pd.DataFrame([sources_data])
+                        
+                        # Display results
+                        st.markdown("#### Extracted Values")
                         st.dataframe(
-                            df,
+                            results_df,
                             use_container_width=True,
                             hide_index=True
                         )
                         
-                        # Display raw results in expandable section
-                        with st.expander("🔍 View Detailed Results"):
+                        # Display confidence levels
+                        st.markdown("#### Confidence Levels")
+                        st.dataframe(
+                            confidence_df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Display sources
+                        st.markdown("#### Sources")
+                        st.dataframe(
+                            sources_df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Raw results in expandable section
+                        with st.expander("🔍 View Raw Results"):
                             st.json(results)
                         
                         # Download options
@@ -249,7 +281,7 @@ def analyze_page():
                         with col1:
                             st.download_button(
                                 "📥 Download CSV",
-                                df.to_csv(index=False),
+                                results_df.to_csv(index=False),
                                 file_name="analysis_results.csv",
                                 mime="text/csv"
                             )
@@ -260,20 +292,7 @@ def analyze_page():
                                 file_name="analysis_results.json",
                                 mime="application/json"
                             )
-                        
-                        # Show confidence levels
-                        st.markdown("#### Confidence Levels")
-                        confidence_data = {
-                            field: details.get("confidence", "unknown")
-                            for field, details in results.items()
-                        }
-                        confidence_df = pd.DataFrame([confidence_data])
-                        st.dataframe(
-                            confidence_df,
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        
+                            
                     except Exception as e:
                         st.error(f"Error formatting results: {str(e)}")
                         st.json(results)  # Fallback to raw JSON display
