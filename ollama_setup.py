@@ -23,85 +23,101 @@ def extract_json_from_response(response):
 def chat_with_document(
     document_content: str, user_input: str, conversation_history: list
 ):
-    prompt = f"""You are a knowledgeable and helpful assistant. 
+    prompt = f"""You are a helpful AI assistant with access to several documents. Your task is to help the user by providing accurate information based on these documents.
 
-    **Context:**
+    CONTEXT:
+    1. Previous Conversation:
+    {format_conversation_history(conversation_history)}
 
-    * Document content: {document_content}
-    * Conversation history: {conversation_history}
-    * User's query: {user_input}
+    2. Available Documents:
+    {document_content}
 
-    **Response Guidelines:**
+    USER QUESTION:
+    {user_input}
 
-    1. Provide accurate and relevant information based on the context.
-    2. Ensure responses are clear, concise, and easy to understand.
-    3. Address the user's query directly and thoroughly.
+    INSTRUCTIONS:
+    1. Base your response only on the provided documents
+    2. If information isn't in the documents, say so clearly
+    3. Use specific references from documents when possible
+    4. Keep responses concise but informative
+    5. Maintain a helpful and professional tone
 
-    Please respond helpfully.
-    """
+    Please provide your response:"""
 
     response = ollama.generate(model="llama3.2", prompt=prompt, stream=False)
     return response.get("response", "").strip()
 
-
 def run_inference_on_document(data: str, instructions: list):
-    seen_titles = set()
-    unique_instructions = []
-    for instruction in instructions:
-        title = instruction["title"].strip().lower().replace(" ", "_")
-        if title not in seen_titles:
-            seen_titles.add(title)
-            unique_instructions.append(
-                {
-                    "title": title,
-                    "data_type": instruction["data_type"],
-                    "description": instruction["description"],
-                }
-            )
+    # Format instructions for better clarity
+    formatted_instructions = "\n".join(
+        f"- {i+1}. {instr['title']}: {instr['description']}"
+        for i, instr in enumerate(instructions)
+    )
 
-    prompt = f"""You are a professional Data Analyst specializing in document information extraction.
-    Your task is to accurately extract specific fields from the provided document.
+    prompt = f"""You are an expert document analyzer. Your task is to extract specific information from the provided documents.
 
-    **Extraction Guidelines:**
-
-    1. Extract the following fields: {unique_instructions}
-    2. If a field is not found in the document, return 'not found' for that field.
-    3. Format your response as a JSON object containing only the specified fields and extracted information.
-
-    **Document:**
+    INPUT DOCUMENTS:
     {data}
-    
-    Please provide the extracted information in JSON format.
-    """
+
+    EXTRACTION REQUIREMENTS:
+    {formatted_instructions}
+
+    INSTRUCTIONS:
+    1. Extract ONLY the requested information
+    2. For each field:
+       - Provide direct quotes where relevant
+       - Mark clearly if information is not found
+       - Indicate if information is ambiguous
+    3. Format output as a clean JSON object
+    4. Use null for missing values
+    5. Include confidence level for each extraction (high/medium/low)
+
+    OUTPUT FORMAT:
+    {{
+        "field_title": {{
+            "value": "extracted_value",
+            "confidence": "high/medium/low",
+            "source": "document_name_if_applicable"
+        }}
+    }}
+
+    Please provide your analysis:"""
 
     response = ollama.generate(
         model="llama3.2", prompt=prompt, format="json", stream=False
     )
-
-    refined_response = extract_json_from_response(response)
-    return refined_response
+    
+    return extract_json_from_response(response)
 
 def chat_with_image(image_bytes: bytes, prompt: str, conversation_history: list = None):
-    
     system_prompt = {
         "role": "system",
-        "content": """You are a highly accurate Image Analysis AI Assistant. 
+        "content": """You are a precise image analysis assistant. Follow these guidelines:
 
-        **Guiding Principles:**
+    1. OBSERVATION:
+    - Describe what you see with high accuracy
+    - Note visual details systematically
+    - Highlight key elements in the image
 
-        1. **Verification**: Only provide statements that can be directly verified from the image.
-        2. **Uncertainty**: Clearly indicate uncertainty or ambiguity when applicable.
-        3. **Contextual Understanding**: Consider the provided context to enhance comprehension.
-        4. **Consistency**: Ensure responses align with previous statements.
-        5. **Objectivity**: Focus on factual observations, avoiding assumptions or inferences.
+    2. ANALYSIS:
+    - Answer questions specifically about visible elements
+    - Clearly state when something is unclear or ambiguous
+    - Don't make assumptions about non-visible aspects
 
-        **Operational Priority:** Accuracy and clarity in image analysis take precedence over all other considerations.
-        """
-    }
+    3. COMMUNICATION:
+    - Be clear and concise
+    - Use structured responses when appropriate
+    - Reference specific parts of the image in your answers
 
+    4. CONTEXT:
+    - Consider previous conversation context
+    - Maintain consistency in your observations
+    - Build upon earlier responses when relevant"""
+        }
 
     max_history = 5
-    recent_messages = conversation_history[-max_history:] if conversation_history else []
+    history = conversation_history[-max_history:] if conversation_history else []
+    recent_messages = format_conversation_history(history)
 
     try:
         response = ollama.chat(
@@ -120,3 +136,14 @@ def chat_with_image(image_bytes: bytes, prompt: str, conversation_history: list 
     except Exception as e:
         logging.error(f"Error in image chat: {str(e)}")
         return f"Error processing image: {str(e)}"
+
+def format_conversation_history(history: list) -> str:
+    """Helper function to format conversation history"""
+    if not history:
+        return "No previous conversation"
+    
+    formatted = "\n".join(
+        f"{'User' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}"
+        for msg in history
+    )
+    return formatted

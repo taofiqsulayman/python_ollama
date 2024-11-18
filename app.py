@@ -3,177 +3,195 @@ import requests
 import json
 from PIL import Image
 import base64
-import pandas as pd
-import time
-
-import streamlit_nested_layout  # noqa: F401
-
 
 # Page config
 st.set_page_config(
     layout="wide",
-    page_title="File Processor",
+    page_title="Document Analysis Assistant",
     page_icon="📄",
     initial_sidebar_state="expanded"
 )
 
 # Session state initialization
 def init_session_state():
+    """Initialize session state with only essential data"""
     default_state = {
-        "initialized": True,
-        "stage": "projects",
         "current_project_id": None,
-        "current_chat_session": None,  # Chat session ID
-        "instructions": [],  # Analysis instructions
-        # Chat history per session
-        "chat_sessions": {},  # Dictionary to store chat sessions by ID
-        "current_chat_name": None,  # Name of current chat session
-        "current_chat_files": [],  # Files in current chat session
-        "current_chat_type": None,  # 'document' or 'image'
-        "message_history": {},  # Store message history by session ID
-        "last_message_time": {},  # Track last message time for each session
-        "auto_refresh": True,  # Toggle for auto-refresh
+        "stage": "projects",  # projects, upload, analyze, chat, chat_image
+        "analysis_instructions": [],
     }
     
-    # Initialize each key if it doesn't exist
     for key, value in default_state.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 init_session_state()
 
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "http://localhost:8000/api/v1"
 
-def wait_for_api(url: str, max_retries: int = 5, delay: int = 2):
-    """Wait for API to become available"""
-    for i in range(max_retries):
-        try:
-            response = requests.get(f"{url}/docs")
-            if response.status_code == 200:
-                return True
-        except requests.exceptions.RequestException:
-            if i < max_retries - 1:
-                time.sleep(delay)
-                continue
-    return False
+def api_request(method, endpoint, **kwargs):
+    """Wrapper for API requests with error handling"""
+    try:
+        response = requests.request(method, f"{API_BASE_URL}/{endpoint}", **kwargs)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"API Error: {str(e)}")
+        return None
 
-# UI Components
 def render_sidebar():
-    """Render sidebar with navigation"""
+    """Render navigation sidebar"""
     with st.sidebar:
-        st.title("File Processor")
-        st.markdown("### Navigation")
-        stages = ["projects", "upload", "analyze", "chat", "chat_image"]
+        st.title("Document Analysis Assistant")
         
-        for stage in stages:
-            if st.button(stage.replace("_", " ").title(), key=f"nav_{stage}"):
-                st.session_state.stage = stage
+        # Project selection if we're not on projects page
+        if st.session_state.current_project_id:
+            st.markdown("### Current Project")
+            projects = api_request("GET", "projects")
+            if projects:
+                current_project = next(
+                    (p for p in projects if p["id"] == st.session_state.current_project_id),
+                    None
+                )
+                if current_project:
+                    st.info(f"📁 {current_project['name']}")
+        
+        st.markdown("### Navigation")
+        
+        if st.button("🏠 Projects", use_container_width=True):
+            st.session_state.stage = "projects"
+            st.rerun()
+            
+        if st.session_state.current_project_id:
+            if st.button("📤 Upload Files", use_container_width=True):
+                st.session_state.stage = "upload"
+                st.rerun()
+                
+            if st.button("🔍 Analyze", use_container_width=True):
+                st.session_state.stage = "analyze"
+                st.rerun()
+                
+            if st.button("💬 Document Chat", use_container_width=True):
+                st.session_state.stage = "chat"
+                st.rerun()
+                
+            if st.button("🖼️ Image Chat", use_container_width=True):
+                st.session_state.stage = "chat_image"
                 st.rerun()
 
 def project_page():
-    """Render project page"""
+    """Project management page"""
     st.title("Projects")
     
-    # Create Project section
-    with st.expander("Create New Project"):
-        with st.form("create_project_form"):
+    with st.expander("➕ Create New Project", expanded=True):
+        with st.form("create_project"):
             name = st.text_input("Project Name")
-            description = st.text_area("Project Description")
-            submitted = st.form_submit_button("Create Project")
-            
-            if submitted and name:
-                # Fix: Update endpoint to match backend
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/projects",  # Changed from /projects/
-                    json={"name": name, "description": description}
-                )
-                if response.status_code == 200:
-                    project_data = response.json()
-                    st.session_state.current_project_id = project_data["id"]
-                    st.session_state.stage = "upload"
-                    st.rerun()
+            description = st.text_area("Description")
+            if st.form_submit_button("Create Project"):
+                if name:
+                    result = api_request("POST", "projects", json={
+                        "name": name,
+                        "description": description
+                    })
+                    if result:
+                        st.session_state.current_project_id = result["id"]
+                        st.success("Project created successfully!")
+                        st.rerun()
                 else:
-                    st.error(f"Error creating project: {response.json().get('detail', 'Unknown error')}")
-
-    # Fix: Update endpoint to match backend
-    response = requests.get(f"{API_BASE_URL}/api/v1/projects")  # Changed from /projects/
-    if response.status_code == 200:
-        projects = response.json()
-        for project in projects:
-            with st.expander(f"📁 {project['name']}"):
-                st.markdown(f"**Description:** {project['description']}")
-                if st.button("Select Project", key=f"select_{project['id']}"):
+                    st.warning("Please enter a project name")
+    
+    st.markdown("### Existing Projects")
+    projects = api_request("GET", "projects")
+    
+    if not projects:
+        st.info("No projects found. Create one to get started!")
+        return
+        
+    for project in projects:
+        with st.container():
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"#### 📁 {project['name']}")
+                if project['description']:
+                    st.markdown(f"_{project['description']}_")
+                st.caption(f"Created: {project['created_at']}")
+            with col2:
+                if st.button("Select", key=f"select_{project['id']}", use_container_width=True):
                     st.session_state.current_project_id = project['id']
                     st.session_state.stage = "upload"
                     st.rerun()
 
 def upload_page():
-    """Render file upload page"""
+    """File upload and management page"""
     st.title("Upload Files")
-
-    if "current_project_id" not in st.session_state:
-        st.session_state.stage = "projects"
-        st.rerun()
-
+    
+    # Show existing files
+    files = api_request("GET", f"projects/{st.session_state.current_project_id}/files")
+    if files:
+        st.markdown("### Existing Files")
+        for file in files:
+            with st.expander(f"📄 {file['file_name']}"):
+                st.text_area(
+                    "Content Preview",
+                    value=file['content'][:500] + "..." if len(file['content']) > 500 else file['content'],
+                    height=100,
+                    disabled=True
+                )
+    
+    st.markdown("### Upload New Files")
     uploaded_files = st.file_uploader(
-        "Upload files",
-        type=["pdf", "docx", "csv"],
-        accept_multiple_files=True  # Allow multiple file upload
+        "Choose files to upload",
+        accept_multiple_files=True,
+        type=["txt", "pdf", "docx"]
     )
     
     if uploaded_files:
-        with st.spinner("Uploading files..."):
-            # Create list of tuples for files parameter
-            files = [
-                ("files", (file.name, file.getvalue(), file.type))
-                for file in uploaded_files
-            ]
-            
-            try:
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/files",
+        if st.button("Process Files", type="primary"):
+            with st.spinner("Processing files..."):
+                files = [
+                    ("files", (file.name, file.getvalue(), file.type))
+                    for file in uploaded_files
+                ]
+                
+                result = api_request(
+                    "POST",
+                    f"projects/{st.session_state.current_project_id}/files",
                     files=files
                 )
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    st.success(f"Successfully uploaded {len(result['files'])} files!")
-                    
-                    # Display uploaded files and their content
-                    for file_info in result['files']:
-                        with st.expander(f"📄 {file_info['file_name']}"):
-                            st.write("Content preview:")
-                            st.markdown(file_info['content'][:500] + "..." if len(file_info['content']) > 500 else file_info['content'])
-                else:
-                    st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
-            except Exception as e:
-                st.error(f"Error uploading files: {str(e)}")
+                if result:
+                    st.success(f"Successfully processed {len(result['files'])} files!")
+                    st.rerun()
 
 def analyze_page():
-    """Combined analysis and instructions page"""
+    """Document analysis page"""
     st.title("Document Analysis")
     
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
         st.rerun()
 
-    # Split the page into two columns
+    if "instructions" not in st.session_state:
+        st.session_state.instructions = []
+
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("### Add Instructions")
         with st.form("instruction_form"):
             title = st.text_input("Title")
-            data_type = st.selectbox("Data Type", ["string", "number"])
+            data_type = st.selectbox("Data Type", ["string", "number", "date", "list"])
             description = st.text_area("Description")
             submitted = st.form_submit_button("Add Instruction")
             
             if submitted and title and description:
-                st.session_state.instructions.append({
+                instruction = {
                     "title": title,
-                    "data_type": data_type,
-                    "description": description
-                })
+                    "description": description,
+                    "data_type": data_type
+                }
+                st.session_state.instructions.append(instruction)
+                st.rerun()
 
         # Show current instructions
         if st.session_state.instructions:
@@ -194,51 +212,51 @@ def analyze_page():
         
         if st.button("Run Analysis", type="primary"):
             with st.spinner("Analyzing documents..."):
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/analyze/",
+                # Remove trailing slash from API endpoint
+                result = api_request(
+                    "POST",
+                    f"projects/{st.session_state.current_project_id}/analyze",  # Removed trailing slash
                     json={"instructions": st.session_state.instructions}
                 )
                 
-                if response.status_code == 200:
-                    results = response.json()["results"]
+                if result and "results" in result:
+                    results = result["results"]
                     
-                    # Create DataFrame from results
-                    df_data = []
-                    for analysis in results:
-                        row = {"File": analysis["file_name"]}
-                        row.update(analysis["results"])
-                        df_data.append(row)
+                    # Display raw JSON results
+                    st.json(results)
                     
-                    df = pd.DataFrame(df_data)
+                    # If results are in a format that can be converted to DataFrame
+                    try:
+                        # Create DataFrame from results if possible
+                        df = pd.DataFrame(results)
+                        if not df.empty:
+                            st.dataframe(df)
+                            
+                            # Download options
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.download_button(
+                                    "📥 Download CSV",
+                                    df.to_csv(index=False),
+                                    file_name="analysis_results.csv",
+                                    mime="text/csv"
+                                )
+                            
+                            # Show summary statistics if numerical data exists
+                            numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
+                            if len(numeric_cols) > 0:
+                                with st.expander("📊 View Summary Statistics"):
+                                    st.dataframe(df[numeric_cols].describe())
+                    except Exception as e:
+                        st.warning("Could not create tabular view of results")
                     
-                    # Display results
-                    st.dataframe(df)
-                    
-                    # Download options in columns
-                    dl_col1, dl_col2 = st.columns(2)
-                    with dl_col1:
-                        st.download_button(
-                            "Download CSV",
-                            df.to_csv(index=False),
-                            file_name="analysis_results.csv",
-                            mime="text/csv"
-                        )
-                    
-                    with dl_col2:
-                        st.download_button(
-                            "Download JSON",
-                            json.dumps(results, indent=2),
-                            file_name="analysis_results.json",
-                            mime="application/json"
-                        )
-                    
-                    # Display summary statistics for numeric columns
-                    numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
-                    if len(numeric_cols) > 0:
-                        with st.expander("View Summary Statistics"):
-                            st.dataframe(df[numeric_cols].describe())
-                else:
-                    st.error(f"Error analyzing documents: {response.json()['detail']}")
+                    # Always offer JSON download
+                    st.download_button(
+                        "📥 Download Results (JSON)",
+                        data=json.dumps(results, indent=2),
+                        file_name="analysis_results.json",
+                        mime="application/json"
+                    )
 
 def render_chat_interface(session_id: int, session_type: str = "document", current_image=None):
     """Shared chat interface component for both document and image chat"""
@@ -498,11 +516,6 @@ def chat_with_image_page():
         )
 
 def main():
-    # Wait for API to be available
-    if not wait_for_api(API_BASE_URL):
-        st.error("Cannot connect to API server. Please try again later.")
-        return
-
     render_sidebar()
     
     # Add error handling around each page render
