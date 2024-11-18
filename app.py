@@ -68,7 +68,7 @@ def render_sidebar():
                 st.session_state.stage = "upload"
                 st.rerun()
                 
-            if st.button("🔍 Analyze", use_container_width=True):
+            if st.button("🔍 Field Extraction", use_container_width=True):
                 st.session_state.stage = "analyze"
                 st.rerun()
                 

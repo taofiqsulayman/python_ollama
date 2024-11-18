@@ -56,7 +56,7 @@ def run_inference_on_document(data: str, instructions: list):
 
     prompt = f"""You are an expert document analyzer. Your task is to extract specific information from the provided documents.
 
-    INPUT DOCUMENTS:
+    INPUT DOCUMENT:
     {data}
 
     EXTRACTION REQUIREMENTS:

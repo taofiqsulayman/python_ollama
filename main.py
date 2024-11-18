@@ -244,48 +244,71 @@ async def analyze_documents(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    """Analyze each document individually and combine results"""
     documents = db.query(Extraction).filter_by(project_id=project_id).all()
     if not documents:
         raise HTTPException(status_code=404, detail="No documents found")
 
-    # Format documents in a more structured way
-    combined_content = "\n\n".join(
-        f"### Document: {doc.file_name}\n"
-        f"Content:\n{doc.content}\n"
-        f"{'='*50}"  # Clear visual separator
-        for doc in documents
-    )
-    
-    # Add a preamble to help guide the LLM
-    context = (
-        "You have been provided with multiple documents. "
-        "Each document is clearly marked with its name and content, "
-        "separated by '=' symbols. "
-        "Please analyze these documents according to the given instructions.\n\n"
-    )
-    
-    final_content = context + combined_content
-
-    # Convert instructions to the format expected by run_inference_on_document
-    formatted_instructions = []
-    for instr in analysis.instructions:
-        formatted_instructions.append({
+    # Format instructions consistently
+    formatted_instructions = [
+        {
             "title": instr.title,
             "description": instr.description,
             "data_type": instr.data_type
-        })
-    
-    results = run_inference_on_document(final_content, formatted_instructions)
-    
-    # Convert instructions to JSON-compatible format for storage
-    instructions_data = [
-        instr.dict() for instr in analysis.instructions
+        }
+        for instr in analysis.instructions
     ]
+
+    # Analyze each document separately
+    all_results = {}
+    for doc in documents:
+        # Prepare single document content
+        content = f"### Document: {doc.file_name}\nContent:\n{doc.content}"
+        
+        # Add context for single document
+        context = (
+            "You have been provided with a document. "
+            "Please analyze this document according to the given instructions.\n\n"
+        )
+        
+        # Get results for this document
+        doc_results = run_inference_on_document(
+            context + content,
+            formatted_instructions
+        )
+        
+        # Store results by document
+        all_results[doc.file_name] = doc_results
+
+    # Combine results into final format
+    combined_results = {}
+    for instruction in formatted_instructions:
+        field_title = instruction["title"]
+        combined_results[field_title] = {
+            "values": [
+                {
+                    "document": doc_name,
+                    **doc_results.get(field_title, {})
+                }
+                for doc_name, doc_results in all_results.items()
+            ],
+            "summary": {
+                "total_documents": len(documents),
+                "documents_with_value": sum(
+                    1 for doc_results in all_results.values()
+                    if field_title in doc_results and doc_results[field_title].get("value") is not None
+                )
+            }
+        }
     
+    # Save to database
     db_analysis = Analysis(
         project_id=project_id,
-        instructions=instructions_data,
-        results=results
+        instructions=[instr.dict() for instr in analysis.instructions],
+        results={
+            "per_document": all_results,
+            "combined": combined_results
+        }
     )
     db.add(db_analysis)
     db.commit()
