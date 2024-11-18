@@ -4,6 +4,7 @@ import json
 from PIL import Image
 import base64
 import pandas as pd
+from utils import create_analysis_tables
 
 # Page config
 st.set_page_config(
@@ -170,7 +171,7 @@ def upload_page():
 
 def analyze_page():
     """Document analysis page"""
-    st.title("Document Analysis")
+    st.title("Field Extraction")
     
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
@@ -183,6 +184,7 @@ def analyze_page():
 
     with col1:
         st.markdown("### Add Instructions")
+        st.info("Add instructions to extract specific fields from documents")
         with st.form("instruction_form"):
             title = st.text_input("Title")
             data_type = st.selectbox("Data Type", ["string", "number", "date", "list"])
@@ -210,7 +212,7 @@ def analyze_page():
                         st.rerun()
 
     with col2:
-        st.markdown("### Analysis Results")
+        st.markdown("### Field Extraction Results")
         if not st.session_state.instructions:
             st.info("Add instructions on the left to analyze documents")
             return
@@ -226,31 +228,9 @@ def analyze_page():
                 if result and "results" in result:
                     results = result["results"]
                     
-                    # Create DataFrame from nested results
+                    # Create DataFrames from results
                     try:
-                        # Initialize data dictionary
-                        data = {}
-                        confidence_data = {}
-                        sources_data = {}
-                        
-                        # Extract data from nested structure
-                        for field, field_data in results.items():
-                            if isinstance(field_data, list):
-                                # Handle array of results
-                                for item in field_data:
-                                    data[field] = item.get("value")
-                                    confidence_data[field] = item.get("confidence", "unknown")
-                                    sources_data[field] = item.get("source", "unknown")
-                            else:
-                                # Handle single result
-                                data[field] = field_data.get("value")
-                                confidence_data[field] = field_data.get("confidence", "unknown")
-                                sources_data[field] = field_data.get("source", "unknown")
-                        
-                        # Create DataFrames
-                        results_df = pd.DataFrame([data])
-                        confidence_df = pd.DataFrame([confidence_data])
-                        sources_df = pd.DataFrame([sources_data])
+                        results_df, confidence_df = create_analysis_tables(results)
                         
                         # Display results
                         st.markdown("#### Extracted Values")
@@ -260,18 +240,9 @@ def analyze_page():
                             hide_index=True
                         )
                         
-                        # Display confidence levels
                         st.markdown("#### Confidence Levels")
                         st.dataframe(
                             confidence_df,
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        
-                        # Display sources
-                        st.markdown("#### Sources")
-                        st.dataframe(
-                            sources_df,
                             use_container_width=True,
                             hide_index=True
                         )
@@ -303,7 +274,7 @@ def analyze_page():
 
 def chat_page():
     """Document chat interface"""
-    st.title("💬 Chat with Documents")
+    st.title("💬 Chat with your Documents")
     
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
@@ -336,7 +307,7 @@ def chat_page():
         return
     
     # Display document list in sidebar
-    doc_names = [f"📄 {f['file_name']}" for f in files]
+    doc_names = [f" {f['file_name']}" for f in files]
     st.sidebar.write("\n".join(doc_names))
     
     # Chat history

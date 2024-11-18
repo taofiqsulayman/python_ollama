@@ -2,9 +2,10 @@ import axios from "axios";
 import {
     AnalysisInstruction,
     ChatMessage,
-    ChatSession,
     Project,
     User,
+    AnalysisResponse,
+    FileResponse,
 } from "../types";
 
 const api = axios.create({
@@ -27,45 +28,27 @@ export const fileProcessorApi = {
         return api.post(`/projects/${projectId}/files`, formData);
     },
 
-    createChatSession: (
-        projectId: number,
-        data: {
-            name?: string;
-            file_ids: number[];
-            session_type: "document" | "image";
-        }
-    ) => api.post<ChatSession>(`/projects/${projectId}/chat-sessions`, data),
+    getFiles: (projectId: number) =>
+        api.get<FileResponse[]>(`/projects/${projectId}/files`),
 
-    getChatSessions: (projectId: number, type?: "document" | "image") =>
-        api.get<ChatSession[]>(`/projects/${projectId}/chat-sessions`, {
-            params: { session_type: type },
-        }),
+    runAnalysis: (projectId: number, instructions: AnalysisInstruction[]) =>
+        api.post<AnalysisResponse>(`/projects/${projectId}/analyze`, { instructions }),
 
     sendMessage: (
         projectId: number,
-        sessionId: number,
         data: {
-            content: string;
-            message_type: "text" | "image";
-            additional_data?: Record<string, any>;
+            prompt: string;
+            chat_type: "document" | "image";
+            image_data?: string;
         }
     ) =>
         api.post<ChatMessage>(
-            `/projects/${projectId}/chat-sessions/${sessionId}/messages`,
+            `/projects/${projectId}/chat`,
             data
         ),
 
-    getChatMessages: (projectId: number, sessionId: number) =>
-        api.get<{
-            messages: { user?: ChatMessage; assistant?: ChatMessage }[];
-        }>(`/projects/${projectId}/chat-sessions/${sessionId}/messages`),
-
-    runAnalysis: (projectId: number, instructions: AnalysisInstruction[]) =>
-        api.post(`/projects/${projectId}/analyze`, { instructions }),
-
-    updateChatSession: (projectId: number, sessionId: number, name: string) =>
-        api.post<ChatSession>(
-            `/projects/${projectId}/chat-sessions/${sessionId}/update`,
-            { name }
-        ),
+    getChatHistory: (projectId: number, chatType?: "document" | "image") =>
+        api.get<{ history: ChatMessage[] }>(`/projects/${projectId}/chat-history`, {
+            params: { chat_type: chatType },
+        }),
 };
