@@ -116,8 +116,7 @@ def chat_with_image(image_bytes: bytes, prompt: str, conversation_history: list 
         }
 
     max_history = 5
-    history = conversation_history[-max_history:] if conversation_history else []
-    recent_messages = format_conversation_history(history)
+    recent_messages = conversation_history[-max_history:] if conversation_history else []
 
     try:
         response = ollama.chat(
