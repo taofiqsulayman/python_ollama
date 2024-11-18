@@ -9,6 +9,7 @@ import pymupdf4llm
 from docx import Document
 import tempfile
 from pathlib import Path
+from typing import Dict, Tuple
 
 os.environ['USE_TORCH'] = '1'
 ocr_model = ocr_predictor(pretrained=True)
@@ -82,6 +83,65 @@ def process_txt_file(file_path):
     with open(file_path, "r") as f:
         text = f.read()
     return text
+
+def create_analysis_tables(json_data: Dict) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Convert JSON response into two dataframes: results table and confidence level table.
+    
+    Args:
+        json_data (dict): JSON response containing per_document analysis results
+    
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: (results_df, confidence_df)
+        - results_df columns: File Name, Instruction1, Instruction2, ...
+        - confidence_df columns: File Name, Instruction1, Instruction2, ...
+    """
+    # Get the per_document data
+    per_document = json_data.get('per_document', {})
+    
+    # Initialize lists to store rows for both tables
+    results_rows = []
+    confidence_rows = []
+    
+    # Get all unique instructions (columns) from the data
+    instructions = set()
+    for doc_data in per_document.values():
+        instructions.update(doc_data.keys())
+    instructions = sorted(list(instructions))  # Sort for consistent column order
+    
+    # Create column names
+    columns = ['File Name'] + instructions
+    
+    # Process each document
+    for filename, doc_data in per_document.items():
+        # Initialize rows with filename
+        result_row = {'File Name': filename}
+        confidence_row = {'File Name': filename}
+        
+        # Process each instruction
+        for instruction in instructions:
+            if instruction in doc_data:
+                # Extract value and confidence
+                value = doc_data[instruction].get('value', '')
+                if isinstance(value, list):
+                    value = ', '.join(str(v) for v in value)
+                confidence = doc_data[instruction].get('confidence', '')
+                
+                result_row[instruction] = value
+                confidence_row[instruction] = confidence
+            else:
+                # Handle missing instructions
+                result_row[instruction] = ''
+                confidence_row[instruction] = ''
+        
+        results_rows.append(result_row)
+        confidence_rows.append(confidence_row)
+    
+    # Create DataFrames
+    results_df = pd.DataFrame(results_rows, columns=columns)
+    confidence_df = pd.DataFrame(confidence_rows, columns=columns)
+    
+    return results_df, confidence_df
 
 async def process_files(upload_file):
     """Handle FastAPI UploadFile object"""

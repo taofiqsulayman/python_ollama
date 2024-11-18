@@ -4,176 +4,201 @@ import json
 from PIL import Image
 import base64
 import pandas as pd
-import time
-
-import streamlit_nested_layout  # noqa: F401
-
+from utils import create_analysis_tables
 
 # Page config
 st.set_page_config(
     layout="wide",
-    page_title="File Processor",
+    page_title="Document Analysis Assistant",
     page_icon="📄",
     initial_sidebar_state="expanded"
 )
 
 # Session state initialization
 def init_session_state():
+    """Initialize session state with only essential data"""
     default_state = {
-        "initialized": True,
-        "stage": "projects",
         "current_project_id": None,
-        "current_chat_session": None,  # Chat session ID
-        "instructions": [],  # Analysis instructions
-        # Chat history per session
-        "chat_sessions": {},  # Dictionary to store chat sessions by ID
-        "current_chat_name": None,  # Name of current chat session
-        "current_chat_files": [],  # Files in current chat session
-        "current_chat_type": None,  # 'document' or 'image'
-        "message_history": {},  # Store message history by session ID
-        "last_message_time": {},  # Track last message time for each session
-        "auto_refresh": True,  # Toggle for auto-refresh
+        "stage": "projects",  # projects, upload, analyze, chat, chat_image
+        "analysis_instructions": [],
     }
     
-    # Initialize each key if it doesn't exist
     for key, value in default_state.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 init_session_state()
 
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "http://localhost:8000/api/v1"
 
-def wait_for_api(url: str, max_retries: int = 5, delay: int = 2):
-    """Wait for API to become available"""
-    for i in range(max_retries):
-        try:
-            response = requests.get(f"{url}/docs")
-            if response.status_code == 200:
-                return True
-        except requests.exceptions.RequestException:
-            if i < max_retries - 1:
-                time.sleep(delay)
-                continue
-    return False
+def api_request(method, endpoint, **kwargs):
+    """Wrapper for API requests with error handling"""
+    try:
+        response = requests.request(method, f"{API_BASE_URL}/{endpoint}", **kwargs)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"API Error: {str(e)}")
+        return None
 
-# UI Components
 def render_sidebar():
-    """Render sidebar with navigation"""
+    """Render navigation sidebar"""
     with st.sidebar:
-        st.title("File Processor")
-        st.markdown("### Navigation")
-        stages = ["projects", "upload", "analyze", "chat", "chat_image"]
+        st.title("Document Analysis Assistant")
         
-        for stage in stages:
-            if st.button(stage.replace("_", " ").title(), key=f"nav_{stage}"):
-                st.session_state.stage = stage
+        # Project selection if we're not on projects page
+        if st.session_state.current_project_id:
+            st.markdown("### Current Project")
+            projects = api_request("GET", "projects")
+            if projects:
+                current_project = next(
+                    (p for p in projects if p["id"] == st.session_state.current_project_id),
+                    None
+                )
+                if current_project:
+                    st.info(f"📁 {current_project['name']}")
+        
+        st.markdown("### Navigation")
+        
+        if st.button("🏠 Projects", use_container_width=True):
+            st.session_state.stage = "projects"
+            st.rerun()
+            
+        if st.session_state.current_project_id:
+            if st.button("📤 Upload Files", use_container_width=True):
+                st.session_state.stage = "upload"
+                st.rerun()
+                
+            if st.button("🔍 Field Extraction", use_container_width=True):
+                st.session_state.stage = "analyze"
+                st.rerun()
+                
+            if st.button("💬 Document Chat", use_container_width=True):
+                st.session_state.stage = "chat"
+                st.rerun()
+                
+            if st.button("🖼️ Image Chat", use_container_width=True):
+                st.session_state.stage = "chat_image"
                 st.rerun()
 
 def project_page():
-    """Render project page"""
+    """Project management page"""
     st.title("Projects")
     
-    # Create Project section
-    with st.expander("Create New Project"):
-        with st.form("create_project_form"):
+    with st.expander("➕ Create New Project", expanded=True):
+        with st.form("create_project"):
             name = st.text_input("Project Name")
-            description = st.text_area("Project Description")
-            submitted = st.form_submit_button("Create Project")
-            
-            if submitted and name:
-                # Fix: Update endpoint to match backend
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/projects",  # Changed from /projects/
-                    json={"name": name, "description": description}
-                )
-                if response.status_code == 200:
-                    project_data = response.json()
-                    st.session_state.current_project_id = project_data["id"]
-                    st.session_state.stage = "upload"
-                    st.rerun()
+            description = st.text_area("Description")
+            if st.form_submit_button("Create Project"):
+                if name:
+                    result = api_request("POST", "projects", json={
+                        "name": name,
+                        "description": description
+                    })
+                    if result:
+                        st.session_state.current_project_id = result["id"]
+                        st.success("Project created successfully!")
+                        st.rerun()
                 else:
-                    st.error(f"Error creating project: {response.json().get('detail', 'Unknown error')}")
-
-    # Fix: Update endpoint to match backend
-    response = requests.get(f"{API_BASE_URL}/api/v1/projects")  # Changed from /projects/
-    if response.status_code == 200:
-        projects = response.json()
-        for project in projects:
-            with st.expander(f"📁 {project['name']}"):
-                st.markdown(f"**Description:** {project['description']}")
-                if st.button("Select Project", key=f"select_{project['id']}"):
+                    st.warning("Please enter a project name")
+    
+    st.markdown("### Existing Projects")
+    projects = api_request("GET", "projects")
+    
+    if not projects:
+        st.info("No projects found. Create one to get started!")
+        return
+        
+    for project in projects:
+        with st.container():
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"#### 📁 {project['name']}")
+                if project['description']:
+                    st.markdown(f"_{project['description']}_")
+                st.caption(f"Created: {project['created_at']}")
+            with col2:
+                if st.button("Select", key=f"select_{project['id']}", use_container_width=True):
                     st.session_state.current_project_id = project['id']
                     st.session_state.stage = "upload"
                     st.rerun()
 
 def upload_page():
-    """Render file upload page"""
+    """File upload and management page"""
     st.title("Upload Files")
-
-    if "current_project_id" not in st.session_state:
-        st.session_state.stage = "projects"
-        st.rerun()
-
+    
+    # Show existing files
+    files = api_request("GET", f"projects/{st.session_state.current_project_id}/files")
+    if files:
+        st.markdown("### Existing Files")
+        for file in files:
+            with st.expander(f"📄 {file['file_name']}"):
+                st.text_area(
+                    "Content Preview",
+                    value=file['content'][:500] + "..." if len(file['content']) > 500 else file['content'],
+                    height=100,
+                    disabled=True
+                )
+    
+    st.markdown("### Upload New Files")
+    key = "file_uploader_" + str(st.session_state.get('upload_counter', 0))
     uploaded_files = st.file_uploader(
-        "Upload files",
-        type=["pdf", "docx", "csv"],
-        accept_multiple_files=True  # Allow multiple file upload
+        "Choose files to upload",
+        accept_multiple_files=True,
+        type=["txt", "pdf", "docx"],
+        key=key
     )
     
     if uploaded_files:
-        with st.spinner("Uploading files..."):
-            # Create list of tuples for files parameter
-            files = [
-                ("files", (file.name, file.getvalue(), file.type))
-                for file in uploaded_files
-            ]
-            
-            try:
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/files",
+        if st.button("Process Files", type="primary"):
+            with st.spinner("Processing files..."):
+                files = [
+                    ("files", (file.name, file.getvalue(), file.type))
+                    for file in uploaded_files
+                ]
+                
+                result = api_request(
+                    "POST",
+                    f"projects/{st.session_state.current_project_id}/files",
                     files=files
                 )
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    st.success(f"Successfully uploaded {len(result['files'])} files!")
-                    
-                    # Display uploaded files and their content
-                    for file_info in result['files']:
-                        with st.expander(f"📄 {file_info['file_name']}"):
-                            st.write("Content preview:")
-                            st.markdown(file_info['content'][:500] + "..." if len(file_info['content']) > 500 else file_info['content'])
-                else:
-                    st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
-            except Exception as e:
-                st.error(f"Error uploading files: {str(e)}")
+                if result:
+                    st.success(f"Successfully processed {len(result['files'])} files!")
+                    # Increment counter to reset file uploader
+                    st.session_state.upload_counter = st.session_state.get('upload_counter', 0) + 1
+                    st.rerun()
 
 def analyze_page():
-    """Combined analysis and instructions page"""
-    st.title("Document Analysis")
+    """Document analysis page"""
+    st.title("Field Extraction")
     
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
         st.rerun()
 
-    # Split the page into two columns
+    if "instructions" not in st.session_state:
+        st.session_state.instructions = []
+
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("### Add Instructions")
+        st.info("Add instructions to extract specific fields from documents")
         with st.form("instruction_form"):
             title = st.text_input("Title")
-            data_type = st.selectbox("Data Type", ["string", "number"])
+            data_type = st.selectbox("Data Type", ["string", "number", "date", "list"])
             description = st.text_area("Description")
             submitted = st.form_submit_button("Add Instruction")
             
             if submitted and title and description:
-                st.session_state.instructions.append({
+                instruction = {
                     "title": title,
-                    "data_type": data_type,
-                    "description": description
-                })
+                    "description": description,
+                    "data_type": data_type
+                }
+                st.session_state.instructions.append(instruction)
+                st.rerun()
 
         # Show current instructions
         if st.session_state.instructions:
@@ -187,322 +212,224 @@ def analyze_page():
                         st.rerun()
 
     with col2:
-        st.markdown("### Analysis Results")
+        st.markdown("### Field Extraction Results")
         if not st.session_state.instructions:
             st.info("Add instructions on the left to analyze documents")
             return
         
         if st.button("Run Analysis", type="primary"):
             with st.spinner("Analyzing documents..."):
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/analyze/",
+                result = api_request(
+                    "POST",
+                    f"projects/{st.session_state.current_project_id}/analyze",
                     json={"instructions": st.session_state.instructions}
                 )
                 
-                if response.status_code == 200:
-                    results = response.json()["results"]
+                if result and "results" in result:
+                    results = result["results"]
                     
-                    # Create DataFrame from results
-                    df_data = []
-                    for analysis in results:
-                        row = {"File": analysis["file_name"]}
-                        row.update(analysis["results"])
-                        df_data.append(row)
-                    
-                    df = pd.DataFrame(df_data)
-                    
-                    # Display results
-                    st.dataframe(df)
-                    
-                    # Download options in columns
-                    dl_col1, dl_col2 = st.columns(2)
-                    with dl_col1:
-                        st.download_button(
-                            "Download CSV",
-                            df.to_csv(index=False),
-                            file_name="analysis_results.csv",
-                            mime="text/csv"
-                        )
-                    
-                    with dl_col2:
-                        st.download_button(
-                            "Download JSON",
-                            json.dumps(results, indent=2),
-                            file_name="analysis_results.json",
-                            mime="application/json"
-                        )
-                    
-                    # Display summary statistics for numeric columns
-                    numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
-                    if len(numeric_cols) > 0:
-                        with st.expander("View Summary Statistics"):
-                            st.dataframe(df[numeric_cols].describe())
-                else:
-                    st.error(f"Error analyzing documents: {response.json()['detail']}")
-
-def render_chat_interface(session_id: int, session_type: str = "document", current_image=None):
-    """Shared chat interface component for both document and image chat"""
-    # Create a main container for all chat components
-    main_container = st.container()
-    
-    # Create containers but don't write to them yet
-    with main_container:
-        messages_area = st.container()
-        # Add some space between messages and input
-        st.markdown("<br>" * 2, unsafe_allow_html=True)
-        # Processing and input at the bottom
-        input_area = st.container()
-        
-        # Use columns to create a fixed bottom area
-        col1, col2 = st.columns([6, 1])
-        with col1:
-            processing_placeholder = st.empty()
-        with col2:
-            # Optional: Add any controls like clear chat, etc.
-            if st.button("Clear Chat"):
-                st.session_state.message_history[session_id] = []
-                st.rerun()
-
-    # Fetch and display messages in the messages area
-    with messages_area:
-        if session_id not in st.session_state.message_history:
-            messages_response = requests.get(
-                f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages"
-            )
-            if messages_response.status_code == 200:
-                st.session_state.message_history[session_id] = messages_response.json()["messages"]
-
-        # Display messages
-        for msg in st.session_state.message_history.get(session_id, []):
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-                st.caption(f":clock2: {msg['timestamp']}")
-
-    # Handle input and processing at the bottom
-    with input_area:
-        if prompt := st.chat_input("Type your message...", key=f"chat_input_{session_id}"):
-            # Show user message immediately
-            with messages_area:
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-                    st.caption(":clock2: Just now")
-            
-            # Add to session history immediately
-            st.session_state.message_history[session_id] = st.session_state.message_history.get(session_id, []) + [
-                {"role": "user", "content": prompt, "timestamp": "Just now"}
-            ]
-
-            # Show loading indicator
-            with processing_placeholder:
-                with st.spinner("Processing..."):
-                    message_data = {
-                        "content": prompt,
-                        "additional_data": {
-                            "image": base64.b64encode(current_image.getvalue()).decode()
-                        } if session_type == "image" and current_image else None
-                    }
-                    
+                    # Create DataFrames from results
                     try:
-                        response = requests.post(
-                            f"{API_BASE_URL}/api/v1/chat-sessions/{session_id}/messages",
-                            json=message_data
+                        results_df, confidence_df = create_analysis_tables(results)
+                        
+                        # Display results
+                        st.markdown("#### Extracted Values")
+                        st.dataframe(
+                            results_df,
+                            use_container_width=True,
+                            hide_index=True
                         )
                         
-                        if response.status_code == 200:
-                            try:
-                                response_data = response.json()
-                                assistant_response = response_data["response"]
-                                with messages_area:
-                                    with st.chat_message("assistant"):
-                                        st.markdown(assistant_response)
-                                        st.caption(":clock2: Just now")
-                                
-                                # Add to history
-                                st.session_state.message_history[session_id].append({
-                                    "role": "assistant",
-                                    "content": assistant_response,
-                                    "timestamp": "Just now"
-                                })
-                            except (ValueError, KeyError) as e:
-                                st.error(f"Invalid response format: {str(e)}")
-                        else:
-                            try:
-                                error_detail = response.json().get('detail', 'Unknown error')
-                            except ValueError:
-                                error_detail = response.text or 'Unknown error'
-                            st.error(f"Error {response.status_code}: {error_detail}")
-                    except requests.exceptions.RequestException as e:
-                        st.error(f"Request failed: {str(e)}")
-
-            # Clear the processing indicator
-            processing_placeholder.empty()
+                        st.markdown("#### Confidence Levels")
+                        st.dataframe(
+                            confidence_df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Raw results in expandable section
+                        with st.expander("🔍 View Raw Results"):
+                            st.json(results)
+                        
+                        # Download options
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.download_button(
+                                "📥 Download CSV",
+                                results_df.to_csv(index=False),
+                                file_name="analysis_results.csv",
+                                mime="text/csv"
+                            )
+                        with col2:
+                            st.download_button(
+                                "📥 Download JSON",
+                                data=json.dumps(results, indent=2),
+                                file_name="analysis_results.json",
+                                mime="application/json"
+                            )
+                            
+                    except Exception as e:
+                        st.error(f"Error formatting results: {str(e)}")
+                        st.json(results)  # Fallback to raw JSON display
 
 def chat_page():
-    """Render chat page with session management"""
-    st.title("Chat with Documents")
+    """Document chat interface"""
+    st.title("💬 Chat with your Documents")
     
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
         st.rerun()
     
-    # Initialize chat session if needed
-    if "current_chat_session" not in st.session_state:
-        st.session_state.current_chat_session = None
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
 
-    # Chat session management
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        # Get project files for new chat
-        response = requests.get(f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/files")
-        if response.status_code == 200:
-            documents = response.json()
-            selected_docs = st.multiselect(
-                "Select documents for new chat",
-                options=[(doc["id"], doc["file_name"]) for doc in documents],
-                format_func=lambda x: x[1]
+    # Get chat history from API
+    history = api_request(
+        "GET", 
+        f"projects/{st.session_state.current_project_id}/chat-history",
+        params={"chat_type": "document"}  # Filter by document type
+    )
+    
+    if history and "history" in history:
+        st.session_state.chat_messages = [
+            {"role": "user", "content": msg["prompt"]}
+            for msg in history["history"]
+        ] + [
+            {"role": "assistant", "content": msg["response"]}
+            for msg in history["history"]
+        ]
+
+    # Show available documents
+    st.sidebar.markdown("### Available Documents")
+    files = api_request("GET", f"projects/{st.session_state.current_project_id}/files")
+    if not files:
+        st.info("⚠️ No documents available. Please upload some files first.")
+        return
+    
+    # Display document list in sidebar
+    doc_names = [f" {f['file_name']}" for f in files]
+    st.sidebar.write("\n".join(doc_names))
+    
+    # Chat history
+    chat_container = st.container()
+    with chat_container:
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+    
+    # Chat input
+    if prompt := st.chat_input("Ask about your documents..."):
+        # Show user message immediately
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Add to history
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        
+        # Get AI response
+        with st.spinner("Thinking..."):
+            response = api_request(
+                "POST",
+                f"projects/{st.session_state.current_project_id}/chat",
+                json={
+                    "prompt": prompt,
+                    "chat_type": "document"
+                }
             )
             
-            if st.button("Start New Chat") and selected_docs:
-                try:
-                    session_data = {
-                        "name": "New Chat Session",  # Generic initial name
-                        "file_ids": [doc[0] for doc in selected_docs],
-                        "session_type": "document"
-                    }
-                    
-                    response = requests.post(
-                        f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
-                        json=session_data
-                    )
-                    
-                    if response.status_code == 200:
-                        # Debug the response
-                        response_data = response.json()
-                        st.write("Debug - Full Response:", response_data)
-                        
-                        if "id" in response_data:
-                            st.session_state.current_chat_session = response_data["id"]
-                            st.rerun()
-                        else:
-                            st.error(f"Invalid response format. Expected 'id' in response. Got: {response_data}")
-                    else:
-                        st.error(f"Error {response.status_code}: {response.text}")
-                except Exception as e:
-                    st.error(f"Error creating chat session: {str(e)}")
-                    st.write("Response content:", response.text)
-
-    with col2:
-        # List existing chat sessions
-        response = requests.get(
-            f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
-            params={"session_type": "document"}
-        )
-        if response.status_code == 200:
-            sessions = response.json()
-            session_names = {s["id"]: s["name"] for s in sessions}
-            selected_session = st.selectbox(
-                "Or select existing chat",
-                options=list(session_names.keys()),
-                format_func=lambda x: session_names[x],
-                index=None
-            )
-            if selected_session:
-                st.session_state.current_chat_session = selected_session
-
-    # Render chat interface if session is selected
-    if st.session_state.current_chat_session:
-        st.markdown("---")
-        render_chat_interface(st.session_state.current_chat_session, "document")
+            if response and "response" in response:
+                # Show AI response
+                with st.chat_message("assistant"):
+                    st.markdown(response["response"])
+                # Add to history
+                st.session_state.chat_messages.append(
+                    {"role": "assistant", "content": response["response"]}
+                )
+                st.rerun()
 
 def chat_with_image_page():
-    """Render image chat page"""
-    st.title("Chat with Image")
+    """Image chat interface"""
+    st.title("🖼️ Chat with Image")
     
     if "current_project_id" not in st.session_state:
         st.session_state.stage = "projects"
         st.rerun()
     
-    # Initialize chat session if needed
-    if "current_chat_session" not in st.session_state:
-        st.session_state.current_chat_session = None
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
 
-    # Session management for image chat
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        if st.button("Start New Image Chat"):
-            try:
-                session_data = {
-                    "name": "New Image Chat Session",  # Generic initial name
-                    "file_ids": [],
-                    "session_type": "image"
-                }
-                response = requests.post(
-                    f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
-                    json=session_data
+    # Get chat history from API filtered by image type
+    history = api_request(
+        "GET", 
+        f"projects/{st.session_state.current_project_id}/chat-history",
+        params={"chat_type": "image"}  # Filter by image type
+    )
+    
+    if history and "history" in history:
+        st.session_state.chat_messages = [
+            {"role": "user", "content": msg["prompt"]}
+            for msg in history["history"]
+        ] + [
+            {"role": "assistant", "content": msg["response"]}
+            for msg in history["history"]
+        ]
+
+    # Image upload
+    uploaded_file = st.file_uploader(
+        "Upload an image to discuss",
+        type=["png", "jpg", "jpeg"],
+        help="Supported formats: PNG, JPG, JPEG"
+    )
+    
+    if uploaded_file:
+        # Display image in sidebar
+        st.sidebar.markdown("### Current Image")
+        image = Image.open(uploaded_file)
+        st.sidebar.image(image, use_column_width=True)
+        
+        # Main chat area
+        chat_container = st.container()
+        
+        # Display chat history
+        with chat_container:
+            for message in st.session_state.chat_messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+        
+        # Chat input
+        if prompt := st.chat_input("Ask about the image..."):
+            # Show user message
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            # Add to history
+            st.session_state.chat_messages.append({"role": "user", "content": prompt})
+            
+            # Get AI response
+            with st.spinner("Analyzing image..."):
+                response = api_request(
+                    "POST",
+                    f"projects/{st.session_state.current_project_id}/chat",
+                    json={
+                        "prompt": prompt,
+                        "chat_type": "image",
+                        "image_data": base64.b64encode(uploaded_file.getvalue()).decode()
+                    }
                 )
                 
-                if response.status_code == 200:
-                    session_data = response.json()
-                    # Debug the response
-                    st.write("Debug - Session Response:", session_data)
-                    st.session_state.current_chat_session = session_data.get("id")
-                    if st.session_state.current_chat_session:
-                        st.rerun()
-                    else:
-                        st.error("Failed to get chat session ID from response")
-                else:
-                    st.error(f"Failed to create chat session: {response.text}")
-            except Exception as e:
-                st.error(f"Error creating chat session: {str(e)}")
-
-    with col2:
-        # List existing image chat sessions
-        response = requests.get(
-            f"{API_BASE_URL}/api/v1/projects/{st.session_state.current_project_id}/chat-sessions",
-            params={"session_type": "image"}
-        )
-        if response.status_code == 200:
-            sessions = response.json()
-            session_names = {s["id"]: s["name"] for s in sessions}
-            selected_session = st.selectbox(
-                "Or select existing image chat",
-                options=list(session_names.keys()),
-                format_func=lambda x: session_names[x],
-                index=None
-            )
-            if selected_session:
-                st.session_state.current_chat_session = selected_session
-
-    # Image upload and chat interface
-    uploaded_file = st.file_uploader("Upload an image", type=["png", "jpg", "jpeg"])
-    
-    if uploaded_file and st.session_state.current_chat_session:
-        image = Image.open(uploaded_file)
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.image(image, caption="Uploaded Image", width=None)
-        
-        with col2:
-            st.download_button(
-                label="Download Original Image",
-                data=uploaded_file,
-                file_name=uploaded_file.name,
-                mime=f"image/{uploaded_file.type.split('/')[-1]}"
-            )
-        
-        st.markdown("---")
-        render_chat_interface(
-            st.session_state.current_chat_session,
-            session_type="image",
-            current_image=uploaded_file
-        )
+                if response and "response" in response:
+                    # Show AI response
+                    with st.chat_message("assistant"):
+                        st.markdown(response["response"])
+                    # Add to history
+                    st.session_state.chat_messages.append(
+                        {"role": "assistant", "content": response["response"]}
+                    )
+                    st.rerun()
+    else:
+        st.info("⚠️ Please upload an image to start chatting")
 
 def main():
-    # Wait for API to be available
-    if not wait_for_api(API_BASE_URL):
-        st.error("Cannot connect to API server. Please try again later.")
-        return
-
     render_sidebar()
     
     # Add error handling around each page render

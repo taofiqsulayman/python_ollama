@@ -3,18 +3,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import os
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional
 from pydantic import BaseModel
 import base64
 import logging
 import torch
 
-from models import ChatMessage, ChatSession, init_db, User, Project, Extraction, Analysis
+from models import ChatHistory, init_db, User, Project, Extraction, Analysis, Base
 from utils import process_files
 from ollama_setup import run_inference_on_document, chat_with_document, chat_with_image
 
 from dotenv import load_dotenv
 load_dotenv()
+
+# Initialize logging with more detailed format
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # Initialize FastAPI app
 app = FastAPI(title="Document Processing API")
@@ -28,8 +34,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize database
-db = init_db(os.getenv("DATABASE_URL"))
+# Initialize database connection on module level
+try:
+    db_session, engine = init_db(os.getenv("DATABASE_URL"))
+    db = db_session
+    logging.info("Database initialization successful")
+except Exception as e:
+    logging.error(f"Failed to initialize database: {str(e)}")
+    raise
 
 # Default user configuration
 DEFAULT_USER = {
@@ -38,18 +50,31 @@ DEFAULT_USER = {
     "role": "advanced"
 }
 
-# Initialize the default user in database
-def init_default_user(db_session: Session):
-    user = db_session.query(User).filter_by(id=DEFAULT_USER["id"]).first()
-    if not user:
-        user = User(
-            id=DEFAULT_USER["id"],
-            username=DEFAULT_USER["username"],
-            role=DEFAULT_USER["role"]
-        )
-        db_session.add(user)
-        db_session.commit()
-    return user
+def ensure_default_user():
+    """Ensure default user exists in database"""
+    session = db()
+    try:
+        # First ensure tables exist
+        Base.metadata.create_all(engine)
+        
+        user = session.query(User).filter_by(id=DEFAULT_USER["id"]).first()
+        if not user:
+            logging.info("Creating default user...")
+            user = User(
+                id=DEFAULT_USER["id"],
+                username=DEFAULT_USER["username"],
+                role=DEFAULT_USER["role"]
+            )
+            session.add(user)
+            session.commit()
+            logging.info("Default user created successfully")
+        return user
+    except Exception as e:
+        logging.error(f"Error ensuring default user: {str(e)}")
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 # Dependency to get database session
 def get_db():
@@ -59,16 +84,35 @@ def get_db():
     finally:
         session.close()
 
-# Modified dependency to always return default user
-async def get_current_user(db: Session = Depends(get_db)):
-    return init_default_user(db)
+# Modified dependency to use cached default user
+def get_current_user(db_session: Session = Depends(get_db)) -> User:
+    """Get or create default user, with proper error handling"""
+    try:
+        user = db_session.query(User).filter_by(id=DEFAULT_USER["id"]).first()
+        if not user:
+            # If user doesn't exist, create it
+            user = User(
+                id=DEFAULT_USER["id"],
+                username=DEFAULT_USER["username"],
+                role=DEFAULT_USER["role"]
+            )
+            db_session.add(user)
+            db_session.commit()
+            db_session.refresh(user)
+            logging.info("Created default user during request")
+        return user
+    except Exception as e:
+        logging.error(f"Error getting/creating default user: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while accessing user"
+        )
 
 # Request/Response Models
 class UserResponse(BaseModel):
     id: str
     username: str
     role: str
-
 class ProjectCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -79,69 +123,30 @@ class ProjectResponse(BaseModel):
     description: Optional[str]
     created_at: datetime
 
-class AnalysisInstruction(BaseModel):
-    title: str
-    data_type: str
-    description: str
-
-# Add this new model for chat requests
-class ChatRequest(BaseModel):
-    message: str
-    document_ids: List[int]
-
-# Add this new model for the analyze request
-class AnalyzeRequest(BaseModel):
-    instructions: List[AnalysisInstruction]
-
-# Add this new model for image chat requests
-class ImageChatRequest(BaseModel):
-    message: str
-    image: str  # base64 encoded image
-    project_id: int
-
-# New Response Models
 class FileResponse(BaseModel):
     id: int
     file_name: str
     content: str
-    processing_status: str
     created_at: datetime
 
-class ChatHistoryItem(BaseModel):
-    user_input: str
-    response: str
-    timestamp: datetime
+class AnalysisInstruction(BaseModel):
+    title: str
+    description: str
+    data_type: str = "text"  # default to text
 
-class ChatHistoryResponse(BaseModel):
-    history: List[ChatHistoryItem]
+class AnalysisRequest(BaseModel):
+    instructions: List[AnalysisInstruction]
 
-# Add new models
-class ChatSessionCreate(BaseModel):
-    name: Optional[str]
-    file_ids: List[int]
-    session_type: str = "document"  # 'document' or 'image'
-
-class ChatMessageCreate(BaseModel):
-    content: str
-    additional_data: Optional[Dict] = None  # Updated from metadata to additional_data
-
-class ChatSessionResponse(BaseModel):
+class AnalysisResponse(BaseModel):
     id: int
-    name: Optional[str]
-    files: List[int]  # Changed from file_ids to match the model
-    session_type: str
+    instructions: List[AnalysisInstruction]
+    results: dict
     created_at: datetime
 
-    class Config:
-        orm_mode = True  # Enable ORM mode to allow direct model return
-
-class ChatMessageResponse(BaseModel):
-    role: str
-    content: str
-    timestamp: datetime
-
-class ChatMessageList(BaseModel):
-    messages: List[dict]
+class ChatRequest(BaseModel):
+    prompt: str
+    chat_type: str = "document"  # or "image"
+    image_data: Optional[str] = None  # base64 string for images
 
 # User endpoints
 @app.get("/api/v1/users/me", response_model=UserResponse)
@@ -201,8 +206,7 @@ async def upload_project_files(
     for file in files:
         content = await process_files(file)
         extraction = Extraction(
-            user_id=current_user.id,
-            project_id=project_id,
+            project_id=project_id,  # Keep only these fields
             file_name=file.filename,
             content=content,
             processing_status="completed"
@@ -226,223 +230,224 @@ async def get_project_files(
     current_user: User = Depends(get_current_user)
 ):
     """Get all files associated with a project"""
-    files = db.query(Extraction).filter_by(
-        project_id=project_id,
-        user_id=current_user.id
-    ).all()
-    
+    files = db.query(Extraction).filter_by(project_id=project_id).all()  # Remove user_id filter
     if not files:
         return []
     return files
 
+
 # Analysis endpoints
-@app.post("/api/v1/projects/{project_id}/analyze")
-async def analyze_project_documents(
+@app.post("/api/v1/projects/{project_id}/analyze", response_model=AnalysisResponse)
+async def analyze_documents(
     project_id: int,
-    analyze_request: AnalyzeRequest,
+    analysis: AnalysisRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Analyze documents in a project based on given instructions"""
-    # Get project documents
-    extractions = db.query(Extraction).filter_by(project_id=project_id).all()
-    if not extractions:
+    """Analyze each document individually and combine results"""
+    documents = db.query(Extraction).filter_by(project_id=project_id).all()
+    if not documents:
         raise HTTPException(status_code=404, detail="No documents found")
 
-    # Run analysis
-    analyses_data = []
-    for extraction in extractions:
-        response = run_inference_on_document(
-            extraction.content,
-            [inst.dict() for inst in analyze_request.instructions]
+    # Format instructions consistently
+    formatted_instructions = [
+        {
+            "title": instr.title,
+            "description": instr.description,
+            "data_type": instr.data_type
+        }
+        for instr in analysis.instructions
+    ]
+
+    # Analyze each document separately
+    all_results = {}
+    for doc in documents:
+        # Prepare single document content
+        content = f"### Document: {doc.file_name}\nContent:\n{doc.content}"
+        
+        # Add context for single document
+        context = (
+            "You have been provided with a document. "
+            "Please analyze this document according to the given instructions.\n\n"
         )
-        analyses_data.append({
-            "file_name": extraction.file_name,
-            "extraction_id": extraction.id,
-            "results": response
-        })
+        
+        # Get results for this document
+        doc_results = run_inference_on_document(
+            context + content,
+            formatted_instructions
+        )
+        
+        # Store results by document
+        all_results[doc.file_name] = doc_results
 
-    # Save analysis
-    analysis = Analysis(
+    # Combine results into final format
+    combined_results = {}
+    for instruction in formatted_instructions:
+        field_title = instruction["title"]
+        combined_results[field_title] = {
+            "values": [
+                {
+                    "document": doc_name,
+                    **doc_results.get(field_title, {})
+                }
+                for doc_name, doc_results in all_results.items()
+            ],
+            "summary": {
+                "total_documents": len(documents),
+                "documents_with_value": sum(
+                    1 for doc_results in all_results.values()
+                    if field_title in doc_results and doc_results[field_title].get("value") is not None
+                )
+            }
+        }
+    
+    # Save to database
+    db_analysis = Analysis(
         project_id=project_id,
-        user_id=current_user.id,
-        instructions=[inst.dict() for inst in analyze_request.instructions],
-        results={"batch_results": analyses_data},
-        status="completed",
-        analysis_type="batch"
+        instructions=[instr.dict() for instr in analysis.instructions],
+        results={
+            "per_document": all_results,
+            "combined": combined_results
+        }
     )
-    db.add(analysis)
+    db.add(db_analysis)
     db.commit()
-
-    return {"analysis_id": analysis.id, "results": analyses_data}
-
-# Chat endpoints
-def generate_session_name(first_message: str, session_type: str) -> str:
-    """Generate a meaningful name for the chat session"""
-    # Truncate long messages and clean up the text
-    max_length = 50
-    cleaned_message = first_message.strip().replace("\n", " ")
-    truncated_message = (
-        f"{cleaned_message[:max_length]}..." 
-        if len(cleaned_message) > max_length 
-        else cleaned_message
-    )
+    db.refresh(db_analysis)
     
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    prefix = "Image Chat" if session_type == "image" else "Chat"
-    
-    return f"{prefix}: {truncated_message} ({timestamp})"
+    return db_analysis
 
-@app.post("/api/v1/chat-sessions/{session_id}/update", response_model=ChatSessionResponse)
-async def update_chat_session(
-    session_id: int,
-    name: str,
-    db: Session = Depends(get_db)
-):
-    """Update chat session name"""
-    session = db.query(ChatSession).get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    
-    session.name = name
-    db.commit()
-    db.refresh(session)
-    return session
-
-@app.post("/api/v1/projects/{project_id}/chat-sessions", response_model=ChatSessionResponse)
-async def create_chat_session(
+@app.get("/api/v1/projects/{project_id}/analyses", response_model=List[AnalysisResponse])
+async def get_project_analyses(
     project_id: int,
-    session: ChatSessionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new chat session"""
-    chat_session = ChatSession(
-        project_id=project_id,
-        user_id=current_user.id,
-        name=session.name,
-        files=session.file_ids,
-        session_type=session.session_type
-    )
-    db.add(chat_session)
-    db.commit()
-    db.refresh(chat_session)  # Make sure to refresh to get the ID
-    return chat_session
+    return db.query(Analysis).filter_by(project_id=project_id).all()
 
-@app.get("/api/v1/projects/{project_id}/chat-sessions")
-async def list_chat_sessions(
+
+# Chat endpoints
+@app.post("/api/v1/projects/{project_id}/chat")
+async def chat_with_project(
     project_id: int,
-    session_type: Optional[str] = None,
-    db: Session = Depends(get_db)
+    chat_request: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """List chat sessions in a project, optionally filtered by type"""
-    query = db.query(ChatSession).filter_by(project_id=project_id)
-    if session_type:
-        query = query.filter_by(session_type=session_type)
-    return query.order_by(ChatSession.created_at.desc()).all()
+    """Chat with documents or images in a project"""
+    project = db.query(Project).filter_by(id=project_id, user_id=current_user.id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
 
-@app.post("/api/v1/chat-sessions/{session_id}/messages")
-async def add_chat_message(
-    session_id: int,
-    message: ChatMessageCreate,
-    db: Session = Depends(get_db)
-):
-    """Add a message to a chat session"""
-    session = db.query(ChatSession).get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-
-    # Get chat history and convert to format expected by chat models
-    history = db.query(ChatMessage).filter_by(session_id=session_id).all()
-    formatted_history = [
-        {
-            "role": msg.role,
-            "content": msg.content,
-            "timestamp": msg.timestamp.isoformat(),
-            **(msg.additional_data or {})
-        }
-        for msg in history
-    ]
-
-    # Handle different session types
-    if session.session_type == "document":
-        documents = db.query(Extraction).filter(
-            Extraction.id.in_(session.files)
-        ).all()
-        
-        response = chat_with_document(
-            "\n\n".join(doc.content for doc in documents),
-            message.content,
-            formatted_history
+    # Get last 5 conversations for context, filtered by chat_type
+    recent_history = (
+        db.query(ChatHistory)
+        .filter_by(
+            project_id=project_id,
+            chat_type=chat_request.chat_type  # Add this filter
         )
-    elif session.session_type == "image":
-        if not message.additional_data or "image" not in message.additional_data:
-            raise HTTPException(status_code=400, detail="Image data required for image chat")
-        
-        image_bytes = base64.b64decode(message.additional_data["image"])
-        response = chat_with_image(
-            image_bytes=image_bytes,
-            prompt=message.content,
-            conversation_history=formatted_history
-        )
-    else:
-        raise HTTPException(status_code=400, detail="Invalid session type")
-
-    # Save messages
-    user_message = ChatMessage(
-        session_id=session_id,
-        role="user",
-        content=message.content,
-        additional_data=message.additional_data
-    )
-    assistant_message = ChatMessage(
-        session_id=session_id,
-        role="assistant",
-        content=response
+        .order_by(ChatHistory.created_at.desc())
+        .limit(5)
+        .all()
     )
     
-    db.add_all([user_message, assistant_message])
-    db.commit()
+    conversation_history = [
+        {"role": "user", "content": h.prompt} if i % 2 == 0 else {"role": "assistant", "content": h.response}
+        for h in reversed(recent_history)
+        for i in range(2)
+    ]
 
-    # Update session name if this is the first message
-    message_count = db.query(ChatMessage).filter_by(session_id=session_id).count()
-    if message_count <= 2:  # Just added first user message and response
-        new_name = generate_session_name(message.content, session.session_type)
-        session.name = new_name
-        db.commit()
+    if chat_request.chat_type == "document":
+        documents = db.query(Extraction).filter_by(project_id=project_id).all()
+        
+        # Format documents with clear structure
+        combined_content = "\n\n".join(
+            f"### Document: {doc.file_name}\n"
+            f"Content:\n{doc.content}\n"
+            f"{'='*50}"  # Clear visual separator
+            for doc in documents
+        )
+        
+        # Add context for the LLM
+        context = (
+            "You have access to the following documents. "
+            "Each document is marked with its name and content, "
+            "separated by '=' symbols. "
+            "Please use these documents to answer the user's question.\n\n"
+        )
+        
+        final_content = context + combined_content
+        response = chat_with_document(final_content, chat_request.prompt, conversation_history)
+    
+    elif chat_request.chat_type == "image":
+        if not chat_request.image_data:
+            raise HTTPException(status_code=400, detail="Image data required for image chat")
+        image_bytes = base64.b64decode(chat_request.image_data)
+        response = chat_with_image(image_bytes, chat_request.prompt, conversation_history)
+    
+    else:
+        raise HTTPException(status_code=400, detail="Invalid chat type")
+
+    # Updated chat history creation
+    chat_history = ChatHistory(
+        project_id=project_id,
+        user_id=current_user.id,  # This will now work with the updated model
+        prompt=chat_request.prompt,
+        response=response,
+        chat_type=chat_request.chat_type
+    )
+    db.add(chat_history)
+    db.commit()
 
     return {"response": response}
 
-@app.get("/api/v1/chat-sessions/{session_id}/messages", response_model=ChatMessageList)
-async def get_chat_messages(
-    session_id: int,
-    db: Session = Depends(get_db)
+@app.get("/api/v1/projects/{project_id}/chat-history")
+async def get_chat_history(
+    project_id: int,
+    chat_type: Optional[str] = None,  # Add this parameter
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """Get all messages for a chat session"""
-    messages = db.query(ChatMessage).filter_by(session_id=session_id).order_by(ChatMessage.timestamp).all()
+    """Get chat history for a project, optionally filtered by chat type"""
+    query = db.query(ChatHistory).filter_by(project_id=project_id)
+    
+    if chat_type:  # Filter by chat_type if provided
+        query = query.filter_by(chat_type=chat_type)
+    
+    history = query.order_by(ChatHistory.created_at).all()
+    
     return {
-        "messages": [
+        "history": [
             {
-                "role": msg.role,
-                "content": msg.content,
-                "timestamp": msg.timestamp.isoformat(),
-                "additional_data": msg.additional_data
+                "prompt": h.prompt,
+                "response": h.response,
+                "type": h.chat_type,
+                "timestamp": h.created_at
             }
-            for msg in messages
+            for h in history
         ]
     }
 
 @app.on_event("startup")
 async def startup_event():
-    # Check GPU availability
-    if torch.cuda.is_available():
-        device_count = torch.cuda.device_count()
-        device_names = [torch.cuda.get_device_name(i) for i in range(device_count)]
-        logging.info(f"GPU available: {device_count} device(s)")
-        for i, name in enumerate(device_names):
-            logging.info(f"GPU {i}: {name}")
-    else:
-        logging.warning("No GPU available, running on CPU")
+    """Initialize app requirements on startup"""
+    try:
+        # Ensure default user exists
+        ensure_default_user()
+        
+        # Check GPU availability
+        if torch.cuda.is_available():
+            device_count = torch.cuda.device_count()
+            device_names = [torch.cuda.get_device_name(i) for i in range(device_count)]
+            logging.info(f"GPU available: {device_count} device(s)")
+            for i, name in enumerate(device_names):
+                logging.info(f"GPU {i}: {name}")
+        else:
+            logging.warning("No GPU available, running on CPU")
+        
+        logging.info("Application startup complete")
+    except Exception as e:
+        logging.error(f"Fatal error during startup: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     import uvicorn
