@@ -3,6 +3,7 @@ import requests
 import json
 from PIL import Image
 import base64
+import pandas as pd  # Add this import
 
 # Page config
 st.set_page_config(
@@ -212,51 +213,70 @@ def analyze_page():
         
         if st.button("Run Analysis", type="primary"):
             with st.spinner("Analyzing documents..."):
-                # Remove trailing slash from API endpoint
                 result = api_request(
                     "POST",
-                    f"projects/{st.session_state.current_project_id}/analyze",  # Removed trailing slash
+                    f"projects/{st.session_state.current_project_id}/analyze",
                     json={"instructions": st.session_state.instructions}
                 )
                 
                 if result and "results" in result:
                     results = result["results"]
                     
-                    # Display raw JSON results
-                    st.json(results)
-                    
-                    # If results are in a format that can be converted to DataFrame
+                    # Create DataFrame from results
                     try:
-                        # Create DataFrame from results if possible
-                        df = pd.DataFrame(results)
-                        if not df.empty:
-                            st.dataframe(df)
-                            
-                            # Download options
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.download_button(
-                                    "📥 Download CSV",
-                                    df.to_csv(index=False),
-                                    file_name="analysis_results.csv",
-                                    mime="text/csv"
-                                )
-                            
-                            # Show summary statistics if numerical data exists
-                            numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns
-                            if len(numeric_cols) > 0:
-                                with st.expander("📊 View Summary Statistics"):
-                                    st.dataframe(df[numeric_cols].describe())
+                        # Extract values from nested result structure
+                        data = {}
+                        for field, details in results.items():
+                            data[field] = details.get("value", None)
+                        
+                        # Create DataFrame with single row
+                        df = pd.DataFrame([data])
+                        
+                        # Display the table
+                        st.markdown("#### Results Table")
+                        st.dataframe(
+                            df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Display raw results in expandable section
+                        with st.expander("🔍 View Detailed Results"):
+                            st.json(results)
+                        
+                        # Download options
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.download_button(
+                                "📥 Download CSV",
+                                df.to_csv(index=False),
+                                file_name="analysis_results.csv",
+                                mime="text/csv"
+                            )
+                        with col2:
+                            st.download_button(
+                                "📥 Download JSON",
+                                data=json.dumps(results, indent=2),
+                                file_name="analysis_results.json",
+                                mime="application/json"
+                            )
+                        
+                        # Show confidence levels
+                        st.markdown("#### Confidence Levels")
+                        confidence_data = {
+                            field: details.get("confidence", "unknown")
+                            for field, details in results.items()
+                        }
+                        confidence_df = pd.DataFrame([confidence_data])
+                        st.dataframe(
+                            confidence_df,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
                     except Exception as e:
-                        st.warning("Could not create tabular view of results")
-                    
-                    # Always offer JSON download
-                    st.download_button(
-                        "📥 Download Results (JSON)",
-                        data=json.dumps(results, indent=2),
-                        file_name="analysis_results.json",
-                        mime="application/json"
-                    )
+                        st.error(f"Error formatting results: {str(e)}")
+                        st.json(results)  # Fallback to raw JSON display
 
 def render_chat_interface(session_id: int, session_type: str = "document", current_image=None):
     """Shared chat interface component for both document and image chat"""
