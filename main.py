@@ -326,6 +326,11 @@ async def get_project_analyses(
 
 
 # Chat endpoints
+
+def fix_base64_padding(base64_string: str) -> str:
+    """Fix base64 padding issues."""
+    return base64_string + '=' * (-len(base64_string) % 4)
+
 @app.post("/api/v1/projects/{project_id}/chat")
 async def chat_with_project(
     project_id: int,
@@ -381,7 +386,8 @@ async def chat_with_project(
     elif chat_request.chat_type == "image":
         if not chat_request.image_data:
             raise HTTPException(status_code=400, detail="Image data required for image chat")
-        image_bytes = base64.b64decode(chat_request.image_data)
+        image_data_fixed = fix_base64_padding(chat_request.image_data)
+        image_bytes = base64.b64decode(image_data_fixed)
         response = chat_with_image(image_bytes, chat_request.prompt, conversation_history)
     
     else:
