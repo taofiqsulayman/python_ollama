@@ -32,19 +32,30 @@ def extract_text_with_ocr(image_path):
 def process_pdf(file_path):
     extracted_text = ''
     doc = fitz.open(file_path)
-    
+
     for i in range(doc.page_count):
         page = doc.load_page(i)
         check_text = page.get_text("text")
+
         if not check_text.strip():
             pixmap = page.get_pixmap()
-            
+
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_img_file:
-                pixmap.save(temp_img_file.name)
-                extracted_text += extract_text_with_ocr(temp_img_file.name)
-                os.remove(temp_img_file.name)  
+                try:
+                    # Save the pixmap to a temporary image file
+                    pixmap.save(temp_img_file.name)
+                    temp_img_file.close()  # Explicitly close the file before processing
+                    extracted_text += extract_text_with_ocr(temp_img_file.name)
+                except Exception as e:
+                    print(f"Error processing page {i} with OCR: {e}")
+                finally:
+                    # Remove the temporary file manually after use
+                    if Path(temp_img_file.name).exists():
+                        os.remove(temp_img_file.name)
+                        print(f"Removed temporary file: {temp_img_file.name}")
         else:
             extracted_text += pymupdf4llm.to_markdown(file_path, pages=[i])
+    
     return extracted_text
 
 def convert_table_to_markdown(df):
@@ -147,29 +158,32 @@ async def process_files(upload_file):
     """Handle FastAPI UploadFile object"""
     # Get file extension
     file_extension = Path(upload_file.filename).suffix.lower()
-    
+
     # Create a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
         # Write uploaded file content to temporary file
         content = await upload_file.read()
         temp_file.write(content)
-        temp_file.flush()
-        
-        try:
-            # Process the temporary file based on its extension
-            temp_path = Path(temp_file.name)
-            if file_extension in [".pdf", ".PDF"]:
-                return process_pdf(temp_path)
-            elif file_extension in [".csv", ".CSV", ".tsv", ".TSV", ".xlsx", ".XLSX"]:
-                return process_csv_xlsx_tsv(temp_path)
-            elif file_extension in [".doc", ".docx"]:
-                return process_word_docs(temp_path)
-            elif file_extension in [".txt", ".TXT"]:
-                return process_txt_file(temp_path)
-            elif file_extension in [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]:
-                return extract_text_with_ocr(temp_path)
-            else:
-                raise ValueError("Unsupported file format. Please use a supported file format.")
-        finally:
-            # Clean up the temporary file
-            os.unlink(temp_path)
+        temp_path = Path(temp_file.name)  # Get the path of the temp file
+
+    try:
+        # Process the temporary file based on its extension
+        if file_extension in [".pdf", ".PDF"]:
+            return process_pdf(temp_path)
+        elif file_extension in [".csv", ".CSV", ".tsv", ".TSV", ".xlsx", ".XLSX"]:
+            return process_csv_xlsx_tsv(temp_path)
+        elif file_extension in [".doc", ".docx"]:
+            return process_word_docs(temp_path)
+        elif file_extension in [".txt", ".TXT"]:
+            return process_txt_file(temp_path)
+        elif file_extension in [".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"]:
+            return extract_text_with_ocr(temp_path)
+        else:
+            raise ValueError("Unsupported file format. Please use a supported file format.")
+    finally:
+        # Clean up the temporary file
+        if temp_path.exists():
+            try:
+                os.unlink(temp_path)
+            except PermissionError as e:
+                print(f"Error deleting file: {e}")
